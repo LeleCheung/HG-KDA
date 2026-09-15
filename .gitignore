@@ -1,0 +1,18 @@
+# Sensitive project documents
+key/secret/
+
+# Generated emulation and profiling artifacts
+code/**/build/
+code/**/results/
+code/**/_inspect/
+*.db
+*.fst
+*.vcd
+*.log
+
+# Local environments and editor files
+.venv/
+__pycache__/
+.idea/
+.vscode/
+
