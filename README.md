@@ -2,6 +2,8 @@
 
 HG-KDA 是 **Hardware-Grounded Kernel Design Agent** 的简称，中文为“硬件制导的算子设计智能体”。
 
+**Linux 接手入口：[第二次汇报任务单](reports/02_work/Linux接手任务.md)。** 已准备动作 JSON、3 张可截图案例卡、XSAI-emu 验证步骤和国产芯片官方 profiler 预研。
+
 本仓库服务于《基于白盒硬件特征制导的算子自动优化技术》课题。课题由中国科学院计算技术研究所承担，智源研究院提供合作支持，任务书和协议位于 `key/secret/`，不纳入公开 Git 仓库。
 
 课题的工程验收包括：Profiling 工具、两款国产 AI 芯片适配、至少五个 Triton-TLE 算子优化，以及相对 FlagGems 基线平均 1.2 倍加速。研究工作需要把这些工程交付组织成一个可验证的问题：
@@ -35,7 +37,10 @@ Top-K Index 属于动态 profiler 和映射模块之间的接口。它的核心�
 ├── README.md
 ├── code/
 │   ├── action-mapping/
-│   │   └── kernel-optimize-优化方法清单.xlsx
+│   │   ├── kernel-optimize-优化方法清单.xlsx
+│   │   ├── export_actions.py   # Excel → 带来源和待验证状态的 JSON
+│   │   ├── demo_cases.json     # 3 个案例的解释与验证方案
+│   │   └── generated/          # actions.json、检查摘要、案例卡 HTML
 │   └── profiling/
 │       └── XSAI-emu/
 │           ├── XSAI-emu-guide.md
@@ -57,9 +62,11 @@ Top-K Index 属于动态 profiler 和映射模块之间的接口。它的核心�
     └── Profiling/              # Top-down 等性能分析资料
 ```
 
-`code/action-mapping/` 是本科生动作库原型，目前包含 compute、memory、latency 三类优化方法。下一步应为每条方法补充触发证据、单位、适用算子/shape、实现入口、风险和验证结果。
+`code/action-mapping/` 包含 78 条由大模型生成的动作先验，已导出为 JSON，保留 Excel 行号、文件哈希和原始字段。阈值和加速比均标为待核验。运行 `python3 code/action-mapping/export_actions.py` 重新导出；[动作库说明](code/action-mapping/README.md)介绍 Agent 使用方式和案例卡。
 
 `code/profiling/XSAI-emu/` 是预编译 XSAI RTL emu 和使用说明。它能运行 `riscv64-xs` bare-metal image，采集 RTL counter、ChiselDB，并用 PerfCCT 分析指令/uop 的流水级时间戳。运行要求、LLVM/AM、emu 参数和 DB 查询方式见 `XSAI-emu-guide.md`。
+
+包内未包含完整 RTL 源码、编译工具链及现成算子。当前已检查归档文件与哈希，Linux 运行和算子实验待接手机器验证。具体见 [XSAI-emu 能力与验证](docs/XSAI-emu能力与Linux验证.md)。
 
 每周汇报在 `reports/` 下按轮次新增 `03_work/`、`04_work/` 等目录，保存当次 PPT、准备材料和会后纪要。第一次汇报前的学术分析保留在 `01_work/`；长期研究定位在 `docs/` 持续更新；复用代码仍在 `code/` 维护。具体材料见[汇报索引](reports/README.md)。
 

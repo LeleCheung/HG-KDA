@@ -10,9 +10,14 @@ code/**/_inspect/
 *.vcd
 *.log
 
+# Machine-local runs, SDKs and imported partner datasets
+/results/
+/data/private/
+code/profiling/XSAI-emu/runtime/
+code/profiling/XSAI-emu/toolchains/
+
 # Local environments and editor files
 .venv/
 __pycache__/
 .idea/
 .vscode/
-
