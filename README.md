@@ -1,4 +1,6 @@
-# Hardware-Grounded Kernel/Compiler Agent
+# HG-KDA: Hardware-Grounded Kernel Design Agent
+
+HG-KDA 是 **Hardware-Grounded Kernel Design Agent** 的简称，中文为“硬件制导的算子设计智能体”。
 
 本仓库服务于《基于白盒硬件特征制导的算子自动优化技术》课题。课题由中国科学院计算技术研究所承担，智源研究院提供合作支持，任务书和协议位于 `key/secret/`，不纳入公开 Git 仓库。
 
