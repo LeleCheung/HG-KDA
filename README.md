@@ -38,21 +38,28 @@ Top-K Index 属于动态 profiler 和映射模块之间的接口。它的核心�
 │       └── XSAI-emu/
 │           ├── XSAI-emu-guide.md
 │           └── xsai-emu.zip
+├── docs/                       # 持续更新的研究定位和技术文档
+│   └── 研究定位与创新点_精简保留版.md
+├── reports/                    # 按智源汇报轮次归档
+│   ├── README.md               # 汇报索引与归档约定
+│   ├── 01_work/                # 第一次汇报及会前分析
+│   │   ├── 面向学术paper的分析.md
+│   │   └── 面向学术与工程落地的研究院汇报.pptx
+│   └── 02_work/                # 第二次汇报，准备中
+│       ├── 汇报准备与材料分析.md
+│       └── profiling信息到优化方法的映射机制.pptx
 ├── key/
-│   ├── 面向学术paper的分析.md
-│   ├── 面向学术与工程落地的研究院汇报.pptx
 │   └── secret/                 # 任务书和协议，禁止公开推送
-├── reference/
-│   ├── KernelAgent/             # CAKE、AVO、KernelBench 等论文
-│   └── Profiling/               # Top-down 等性能分析资料
-├── 研究定位与创新点_精简保留版.md
-├── 下一次研究院汇报_定位与材料分析.md
-└── profiling信息到优化方法的映射机制.pptx
+└── reference/
+    ├── KernelAgent/            # CAKE、AVO、KernelBench 等论文
+    └── Profiling/              # Top-down 等性能分析资料
 ```
 
 `code/action-mapping/` 是本科生动作库原型，目前包含 compute、memory、latency 三类优化方法。下一步应为每条方法补充触发证据、单位、适用算子/shape、实现入口、风险和验证结果。
 
 `code/profiling/XSAI-emu/` 是预编译 XSAI RTL emu 和使用说明。它能运行 `riscv64-xs` bare-metal image，采集 RTL counter、ChiselDB，并用 PerfCCT 分析指令/uop 的流水级时间戳。运行要求、LLVM/AM、emu 参数和 DB 查询方式见 `XSAI-emu-guide.md`。
+
+每周汇报在 `reports/` 下按轮次新增 `03_work/`、`04_work/` 等目录，保存当次 PPT、准备材料和会后纪要。第一次汇报前的学术分析保留在 `01_work/`；长期研究定位在 `docs/` 持续更新；复用代码仍在 `code/` 维护。具体材料见[汇报索引](reports/README.md)。
 
 ## 三个平台的关系
 
@@ -125,7 +132,7 @@ Top-down 的层次化思想可以用于组织诊断顺序：
 
 国产芯片应重新定义层次和指标，不能直接复制 Intel 的 slot 百分比。XGBoost/SHAP 可用于候选特征筛选和性能预测，SHAP 结果需要通过 tile/layout/pipeline 等干预实验验证因果方向。
 
-## 明天拿到国产卡后的工作清单
+## 国产卡接入工作清单
 
 ### 当天完成
 
@@ -143,7 +150,9 @@ Top-down 的层次化思想可以用于组织诊断顺序：
 
 交付先追求“一个算子闭环和一张能力矩阵”，再扩展到五个算子。这样能快速判断这张卡适合做真实灰盒验证，还是只能作为时间和编译反馈平台。
 
-## 下一次智源汇报
+## 第二次智源汇报（准备中）
+
+本次材料位于 [reports/02_work/](reports/02_work/)，后续汇报按轮次另建目录。
 
 建议题目：**从 Profiling 证据到算子优化动作：XSAI 白盒研究与国产卡灰盒验证**。
 
@@ -169,11 +178,11 @@ Top-down 的层次化思想可以用于组织诊断顺序：
 
 ## 参考材料
 
-- `key/面向学术paper的分析.md`：早期任务拆解和研究 gap；
-- `key/面向学术与工程落地的研究院汇报.pptx`：上次汇报原稿；
-- `研究定位与创新点_精简保留版.md`：研究定位和最小实验矩阵；
-- `下一次研究院汇报_定位与材料分析.md`：下一次汇报建议；
+- [第一次汇报前的学术分析](reports/01_work/面向学术paper的分析.md)：早期任务拆解和研究 gap；
+- [第一次汇报 PPT](reports/01_work/面向学术与工程落地的研究院汇报.pptx)：首次研究院汇报原稿；
+- [研究定位与创新点](docs/研究定位与创新点_精简保留版.md)：持续更新的研究定位和最小实验矩阵；
+- [第二次汇报准备与材料分析](reports/02_work/汇报准备与材料分析.md)：本次汇报建议；
+- [第二次汇报的动作映射进展](reports/02_work/profiling信息到优化方法的映射机制.pptx)：本科生阶段材料；
 - `reference/KernelAgent/CAKE/CAKE_人话版读书笔记.md`；
 - `reference/KernelAgent/AVO/AVO_人话版读书笔记.md`；
 - `code/profiling/XSAI-emu/XSAI-emu-guide.md`：XSAI-emu 使用说明。
-
