@@ -1,0 +1,79 @@
+<mxfile host="Electron" agent="Codex">
+  <diagram id="traditional-kernel-agent" name="传统 Kernel Agent">
+    <mxGraphModel dx="1701" dy="1145" grid="0" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1400" pageHeight="800" background="#FFFFFF" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="title" parent="1" style="text;html=1;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=24;fontStyle=1;fontColor=#111827;" value="传统 Kernel Agent：Profiling 到动作的映射主要隐含在 Agent 内部" vertex="1">
+          <mxGeometry height="50" width="1220" x="90" y="30" as="geometry" />
+        </mxCell>
+        <mxCell id="kernel" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#DBEAFE;strokeColor=#2563EB;strokeWidth=2;fontColor=#172554;fontSize=17;align=center;verticalAlign=middle;arcSize=12;" value="&lt;b&gt;Kernel 代码&lt;/b&gt;" vertex="1">
+          <mxGeometry height="80" width="165" x="60" y="205" as="geometry" />
+        </mxCell>
+        <mxCell id="compile" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#DBEAFE;strokeColor=#2563EB;strokeWidth=2;fontColor=#172554;fontSize=17;align=center;verticalAlign=middle;arcSize=12;" value="&lt;b&gt;编译与运行&lt;/b&gt;" vertex="1">
+          <mxGeometry height="80" width="175" x="275" y="205" as="geometry" />
+        </mxCell>
+        <mxCell id="feedback" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#DBEAFE;strokeColor=#2563EB;strokeWidth=2;fontColor=#172554;fontSize=16;align=center;verticalAlign=middle;arcSize=12;" value="&lt;b&gt;运行与编译反馈&lt;/b&gt;&lt;br&gt;Latency · Profiler 报告 · 错误" vertex="1">
+          <mxGeometry height="100" width="235" x="500" y="195" as="geometry" />
+        </mxCell>
+        <mxCell id="agent" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#DBEAFE;strokeColor=#2563EB;strokeWidth=2;fontColor=#172554;fontSize=16;align=center;verticalAlign=middle;arcSize=12;" value="&lt;b&gt;Agent / LLM&lt;/b&gt;&lt;br&gt;在上下文中理解瓶颈&lt;br&gt;依靠模型经验选择动作" vertex="1">
+          <mxGeometry height="120" width="240" x="785" y="185" as="geometry" />
+        </mxCell>
+        <mxCell id="modify" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#DBEAFE;strokeColor=#2563EB;strokeWidth=2;fontColor=#172554;fontSize=17;align=center;verticalAlign=middle;arcSize=12;" value="&lt;b&gt;修改 Kernel&lt;/b&gt;" vertex="1">
+          <mxGeometry height="80" width="180" x="1075" y="205" as="geometry" />
+        </mxCell>
+        <mxCell id="validation" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#DBEAFE;strokeColor=#2563EB;strokeWidth=2;fontColor=#172554;fontSize=16;align=center;verticalAlign=middle;arcSize=12;" value="&lt;b&gt;结果验证&lt;/b&gt;&lt;br&gt;正确性 · Speedup" vertex="1">
+          <mxGeometry height="85" width="210" x="450" y="430" as="geometry" />
+        </mxCell>
+        <mxCell id="implicit" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FEE2E2;strokeColor=#B91C1C;strokeWidth=2;dashed=1;dashPattern=5 4;fontColor=#450A0A;fontSize=16;align=center;verticalAlign=middle;arcSize=12;" value="&lt;b&gt;证据 → 瓶颈 → 动作&lt;/b&gt;&lt;br&gt;隐含在模型知识和上下文中&lt;div&gt;中间判断难以检查、复用、迁移和单独评价&lt;/div&gt;" vertex="1">
+          <mxGeometry height="116" width="370" x="720" y="434" as="geometry" />
+        </mxCell>
+        <mxCell id="legend_shared" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#DBEAFE;strokeColor=#2563EB;strokeWidth=2;fontColor=#172554;fontSize=15;align=center;verticalAlign=middle;arcSize=12;" value="蓝色：两类系统共有的执行闭环" vertex="1">
+          <mxGeometry height="55" width="330" x="310" y="650" as="geometry" />
+        </mxCell>
+        <mxCell id="legend_implicit" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FEE2E2;strokeColor=#B91C1C;strokeWidth=2;dashed=1;dashPattern=5 4;fontColor=#450A0A;fontSize=15;align=center;verticalAlign=middle;arcSize=12;" value="红色虚线：传统流程中未显式化的推理" vertex="1">
+          <mxGeometry height="55" width="400" x="690" y="650" as="geometry" />
+        </mxCell>
+        <mxCell id="e1" edge="1" parent="1" source="kernel" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#2563EB;strokeWidth=2;endArrow=block;endFill=1;" target="compile">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e2" edge="1" parent="1" source="compile" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#2563EB;strokeWidth=2;endArrow=block;endFill=1;" target="feedback">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e3" edge="1" parent="1" source="feedback" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#2563EB;strokeWidth=2;endArrow=block;endFill=1;" target="agent">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e4" edge="1" parent="1" source="agent" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#2563EB;strokeWidth=2;endArrow=block;endFill=1;" target="modify">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e5" edge="1" parent="1" source="modify" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#2563EB;strokeWidth=2;endArrow=block;endFill=1;entryX=0.5;entryY=0;entryDx=0;entryDy=0;exitX=0.5;exitY=0;exitDx=0;exitDy=0;" target="compile">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1165" y="130.35" />
+              <mxPoint x="362.53" y="130.35" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e6" edge="1" parent="1" source="compile" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#2563EB;strokeWidth=2;endArrow=block;endFill=1;" target="validation">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="413.03" y="357.48" />
+              <mxPoint x="555.03" y="357.48" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e7" edge="1" parent="1" source="validation" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#2563EB;strokeWidth=2;endArrow=block;endFill=1;exitX=0.75;exitY=0;exitDx=0;exitDy=0;" target="agent">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="607.52" y="368.62" />
+              <mxPoint x="810.76" y="368.62" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e8" edge="1" parent="1" source="implicit" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#B91C1C;strokeWidth=2;dashed=1;dashPattern=5 4;endArrow=open;endFill=0;" target="agent">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

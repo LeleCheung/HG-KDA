@@ -21,3 +21,5 @@ code/profiling/XSAI-emu/toolchains/
 __pycache__/
 .idea/
 .vscode/
+.$*.drawio.bkp
+~$*.pptx

@@ -1,0 +1,84 @@
+<mxfile host="Electron" agent="Codex">
+  <diagram id="paper-cn-hg-kda" name="HG-KDA">
+    <mxGraphModel dx="2020" dy="989" grid="0" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="2200" pageHeight="760" background="#FFFFFF" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="title" parent="1" style="text;html=1;align=center;verticalAlign=middle;whiteSpace=wrap;fontFamily=Microsoft YaHei;fontSize=24;fontStyle=1;fontColor=#111827;" value="（b）HG-KDA" vertex="1">
+          <mxGeometry height="45" width="800" x="700" y="35" as="geometry" />
+        </mxCell>
+        <mxCell id="kernel" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#DBEAFE;strokeColor=#2563EB;strokeWidth=2;fontColor=#172554;fontFamily=Microsoft YaHei;fontSize=18;align=center;verticalAlign=middle;arcSize=12;" value="&lt;b&gt;Kernel 代码&lt;/b&gt;" vertex="1">
+          <mxGeometry height="90" width="140" x="30" y="255" as="geometry" />
+        </mxCell>
+        <mxCell id="execute" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#DBEAFE;strokeColor=#2563EB;strokeWidth=2;fontColor=#172554;fontFamily=Microsoft YaHei;fontSize=16;align=center;verticalAlign=middle;arcSize=12;" value="&lt;b&gt;编译、运行与评测&lt;/b&gt;" vertex="1">
+          <mxGeometry height="110" width="200" x="210" y="245" as="geometry" />
+        </mxCell>
+        <mxCell id="feedback" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#DBEAFE;strokeColor=#2563EB;strokeWidth=2;fontColor=#172554;fontFamily=Microsoft YaHei;fontSize=15;align=center;verticalAlign=middle;arcSize=12;" value="&lt;b&gt;执行反馈&lt;/b&gt;&lt;br&gt;正确性 + 性能&lt;div&gt;厂商原始Profiling数据&lt;/div&gt;" vertex="1">
+          <mxGeometry height="130" width="227" x="450" y="235" as="geometry" />
+        </mxCell>
+        <mxCell id="interface_group" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=none;strokeColor=#D97706;strokeWidth=2;dashed=1;dashPattern=6 4;arcSize=8;pointerEvents=0;" value="" vertex="1">
+          <mxGeometry height="220" width="790" x="690" y="170" as="geometry" />
+        </mxCell>
+        <mxCell id="interface_label" parent="1" style="text;html=1;align=center;verticalAlign=middle;whiteSpace=wrap;fontFamily=Microsoft YaHei;fontSize=18;fontStyle=1;fontColor=#D97706;" value="显式 Evidence-to-Action 接口" vertex="1">
+          <mxGeometry height="35" width="750" x="710" y="185" as="geometry" />
+        </mxCell>
+        <mxCell id="evidence" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFEDD5;strokeColor=#D97706;strokeWidth=3;fontColor=#431407;fontFamily=Microsoft YaHei;fontSize=18;align=center;verticalAlign=middle;arcSize=12;" value="&lt;b&gt;跨平台标准化证据&lt;/b&gt;" vertex="1">
+          <mxGeometry height="100" width="220" x="710" y="250" as="geometry" />
+        </mxCell>
+        <mxCell id="diagnosis" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFEDD5;strokeColor=#D97706;strokeWidth=3;fontColor=#431407;fontFamily=Microsoft YaHei;fontSize=18;align=center;verticalAlign=middle;arcSize=12;" value="&lt;b&gt;细粒度瓶颈诊断&lt;/b&gt;" vertex="1">
+          <mxGeometry height="100" width="220" x="970" y="250" as="geometry" />
+        </mxCell>
+        <mxCell id="actions" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFEDD5;strokeColor=#D97706;strokeWidth=3;fontColor=#431407;fontFamily=Microsoft YaHei;fontSize=18;align=center;verticalAlign=middle;arcSize=12;" value="&lt;b&gt;条件触发的候选动作&lt;/b&gt;" vertex="1">
+          <mxGeometry height="100" width="230" x="1230" y="250" as="geometry" />
+        </mxCell>
+        <mxCell id="agent" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#DBEAFE;strokeColor=#2563EB;strokeWidth=2;fontColor=#172554;fontFamily=Microsoft YaHei;fontSize=18;align=center;verticalAlign=middle;arcSize=12;" value="&lt;b&gt;Kernel Agent&lt;/b&gt;" vertex="1">
+          <mxGeometry height="100" width="200" x="1500" y="250" as="geometry" />
+        </mxCell>
+        <mxCell id="update" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#DBEAFE;strokeColor=#2563EB;strokeWidth=2;fontColor=#172554;fontFamily=Microsoft YaHei;fontSize=16;align=center;verticalAlign=middle;arcSize=12;" value="&lt;b&gt;修改 Kernel / IR&lt;/b&gt;" vertex="1">
+          <mxGeometry height="90" width="210" x="1740" y="255" as="geometry" />
+        </mxCell>
+        <mxCell id="grounding" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#DCFCE7;strokeColor=#15803D;strokeWidth=2;fontColor=#052E16;fontFamily=Microsoft YaHei;fontSize=17;align=center;verticalAlign=middle;arcSize=12;" value="&lt;b&gt;硬件 Grounding&lt;/b&gt;&lt;br&gt;白盒XSAI · 灰盒国产卡" vertex="1">
+          <mxGeometry height="80" width="730" x="715" y="500" as="geometry" />
+        </mxCell>
+        <mxCell id="e1" edge="1" parent="1" source="kernel" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#374151;strokeWidth=2;endArrow=block;endFill=1;" target="execute">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e2" edge="1" parent="1" source="execute" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#374151;strokeWidth=2;endArrow=block;endFill=1;" target="feedback">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e3" edge="1" parent="1" source="feedback" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#D97706;strokeWidth=3;endArrow=block;endFill=1;" target="evidence">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e4" edge="1" parent="1" source="evidence" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#D97706;strokeWidth=3;endArrow=block;endFill=1;" target="diagnosis">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e5" edge="1" parent="1" source="diagnosis" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#D97706;strokeWidth=3;endArrow=block;endFill=1;" target="actions">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e6" edge="1" parent="1" source="actions" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#D97706;strokeWidth=3;endArrow=block;endFill=1;" target="agent">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e7" edge="1" parent="1" source="agent" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#374151;strokeWidth=2;endArrow=block;endFill=1;" target="update">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e8" edge="1" parent="1" source="update" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#374151;strokeWidth=2;endArrow=block;endFill=1;" target="execute">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1845" y="125" />
+              <mxPoint x="310" y="125" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e9" edge="1" parent="1" source="grounding" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#15803D;strokeWidth=2;endArrow=block;endFill=1;" target="evidence">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e10" edge="1" parent="1" source="grounding" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#15803D;strokeWidth=2;endArrow=block;endFill=1;" target="diagnosis">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e11" edge="1" parent="1" source="grounding" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#15803D;strokeWidth=2;endArrow=block;endFill=1;" target="actions">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
