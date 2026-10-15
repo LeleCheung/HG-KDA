@@ -1,0 +1,18 @@
+﻿
+                     Profiling Tools                   Python     Framework         C++      Device     Cross       Cross          CPU
+           Category                Name                Context      Context        Context   Context    GPUs     Frameworks      Profiling
+       System Profilers
+                               Linux perf [36]            脳            脳             鉁?         脳         脳           鉁?             鉁?
+                                eBPF [30, 31]             脳            脳             鉁?         脳         脳           鉁?             鉁?
+
+          Hardware
+                             Nsight Systems [41]          鉁?           脳             鉁?         脳         脳           鉁?             鉁?
+          Profilers
+                                 rocprof [4]              脳            脳             脳          脳         脳           脳              脳
+                              Intel VTune [29]            脳            脳             鉁?         脳         脳           鉁?             鉁?
+         Framework            JAX profiler [32]           鉁?           脳             脳          脳         鉁?           脳             鉁?
+          Profilers         PyTorch profiler [47]         鉁?           鉁?            脳          脳         鉁?           脳             鉁?
+       Python Profilers           Scalene [8]             鉁?           脳             脳          脳         脳           鉁?             鉁?
+        Deep Learning           XSP [35]                  脳            鉁?            脳          鉁?        脳           鉁?             脳
+          Profilers        DeepContext (our tool)         鉁?           鉁?            鉁?         鉁?        鉁?          鉁?             鉁?
+

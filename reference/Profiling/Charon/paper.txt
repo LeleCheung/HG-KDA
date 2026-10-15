@@ -1,0 +1,1943 @@
+=== Page 1 ===
+Charon: A Unified and Fine-Grained Simulator for
+Large-Scale LLM Training and Inference
+Mengtian Yang 1,2,∗,†,Zhekun Zhang 1,Mingheng Wu 1,Jianwen Yan 1,Hanshi Sun 1,
+Li-wen Chang 1,†
+1ByteDance Seed, 2University of Texas at Austin
+∗Work done at ByteDance Seed,†Corresponding authors
+Abstract
+Deploying large-scale LLM training and inference with optimal performance is exceptionally
+challenging due to a complex design space of parallelism strategies, system optimizations, and
+hardware configurations. Accurate and rapid performance simulation is critical for guiding
+optimization efforts and system studies by validating “what-if” hypotheses. To address this,
+we introduce Charon, a unified, modular, and fine-grained simulator for accurately predicting
+LLM performance. Experiments show Charon achieves high accuracy across different models
+and configurations, with an overall prediction error consistently under 5.35%, and even under
+3.74% for training with a large-scale GPU cluster. In a practical inference deployment case,
+Charon discovered a configuration that improved system throughput over an engineering-tuned
+baseline, demonstrating its significant real-world value.
+Date:May 16, 2026
+Correspondence:mtyang@bytedance.comandliwen.chang@bytedance.com
+1 Introduction
+In recent years, large language model (LLM) work-
+loads have rapidly transitioned from research proto-
+types to production systems powering search engines,
+conversational agents, and code assistants. This shift
+has brought an unprecedented surge in computational
+demand—for instance, training a model like LLaMA-
+3 405B can consume over 30 million GPU hours across
+16,000 H100 GPUs [12]. At this scale, the efficiency
+of both training and inference depends on the care-
+ful coordination of parallelism strategies, network
+topology, and model architecture. Even small mis-
+configurations can result in days of wasted compute
+or intolerable serving latency, leading to substantial
+financial and operational costs. To address these,
+performance simulators have been widely explored
+to capture the behavior of LLM training and serving
+pipelines, facilitating scalability analysis and hard-
+ware–software co-design [1, 2, 4, 10, 19, 21].
+HookerFigure
+NativeModels
+CharonSimulationPlatform
+•Graph-basedOperator-levelSimulation
+•Different Computation CardAdoption
+•ClusterTopology-awareCommunication
+Profiling-based
+Tuning •BestConfig
+•ExpectedPerf
+•ExecTimeline
+DesignExplorationw/Charon
+Training/Inference
+Workload
+GPU
+GPUOR
+CostPerEvaluation
+EvaluationAccuracy
+Profile Charon
+$1k Few¢>30kx
+Saving
+ProfileCharon
+-3.74%
+0
+1
+Figure 1Charon enables end-to-end, operator-level sim-
+ulation for LLM training and inference. It delivers more
+than 30k cost reduction compared with cluster profiling
+for large-scale experiment, with only 3.74% total training
+time error on a large-scale training task.
+However, existing LLM simulators remain fragmented
+1
+arXiv:2605.17164v2  [cs.DC]  19 May 2026
+
+=== Page 2 ===
+Table 1Capabilities of existing training and inference simulators
+Astra-sim SimAI Lumos Echo Vidur LLMServingSim Charon (This Work)
+Training ! ! ! ! % % !
+Inference ! % % % ! ! !
+Design Searching % % % % ! % !
+Trace Generation % % ! % ! % !(w/ 3D Timeline)
+Optimizations
+(Fusion, Reorder, ...)% % % ! % % !
+Overlapping
+Slowdown N/A Ratio N/A Prediction N/A N/ACluster-aware Modeling
+Computation
+Modeling Analytical Profile /
+Analytical
+Profile /
+In-house Profile Profile Profile /
+Analytical
+Analytical / Profile /
+Prediction
+Communication
+Modeling AnalyticalAnalytical In-house Analytical/
+Prediction Profile Analytical Analytical / Profile /
+Prediction
+Parallelism TP / DP
+/ PP
+TP / DP /
+PP / EP
+TP / PP
+/ DP
+TP / PP /
+DP TP / PP TP / PP TP / PP / DP / EP / SP /
+ZeRO / DualPipe
+Input Hand
+Crafted
+Mocked
+Model
+Profiled
+Traces
+Mocked
+Traces
+Mocked
+Model Hand Crafted Native HuggingFace /
+PyTorch / vLLM Model
+and insufficient for end-to-end analyses. Most are
+specialized for either training [4, 6, 10, 19] or infer-
+ence [1, 2], forcing engineers to rely on separate,
+often incompatible tools. They also impose sub-
+stantial usability overhead, requiring manually build-
+ing models inside the simulator [1, 19, 21] or pre-
+processing [4, 10] rather than supporting direct use
+of native models. Architecturally, existing simula-
+tors either lack operator-level granularity in modeling
+bothcomputationandcommunication[ 19,21], orlack
+the flexibility to modify operator graphs for simulat-
+ing system or compiler optimizations [1, 4]. These
+limitations hinder fine-grained performance analy-
+sis, seamless hardware integration, and optimization
+exploration. Table 1 summarizes these limitations,
+including gaps in workload coverage, parallelism sup-
+port, simulation granularity, and backend flexibility.
+Consequently, an ideal simulator should support both
+training and inference, allow direct use of native mod-
+els, provide operator-level insights, and enable flexi-
+ble integration of hardware backends and parallelism
+strategies, allowing accurate design-space exploration
+and performance analysis at scale.
+To overcome the fragmentation and rigidity of exist-
+ing LLM simulators, which often trade off fidelity for
+speed or flexibility for usability, we propose Charon,
+a unified, modular, and fine-grained simulation frame-
+work for large-scale LLM training and inference. The
+key insight is to treat LLM simulation as a compiler-
+style transformation process, where each stage incre-
+mentally refines the model, schedule, and system rep-
+resentation to balance speed, accuracy, and scalabil-
+ity. Architecturally, this perspective allows Charon to
+have a higher coverage and accuracy than prior simu-
+lators by: (i) native model interface directly accepts
+HuggingFace, vLLM or custom PyTorch models, elim-
+inating hand-crafting or preprocessing; (ii) modular
+pass-based design which supports plug-and-play anal-
+ysis and optimization passes, allowing flexible paral-
+lelism strategies and new optimization to be modeled
+without refactoring core infrastructure; (iii) multi-
+granularity analysis produces system-level aspects as
+well as fine-grained PyTorch style traces, exposing
+rich information for performance debugging; (iv) hy-
+brid operator simulation which combined analytical,
+profiling, and prediction backends, achieving optimal
+trade off between speed and accuracy.
+Empirically, we conducted extensive evaluations of
+Charon, validating its accuracy against both ground-
+truth hardware measurements and leading simula-
+tors. Across diverse models, including LLaMA3-
+8B, Qwen3-8B, and Qwen3-30B-A3B, Charon con-
+sistently achieves the highest end-to-end simulation
+fidelity, with overall prediction errors within 5.35%
+of physical hardware and even within 3.74% with a
+large-scale GPU cluster. Fine-grained operator-level
+breakdowns further confirm that Charon accurately
+models both computation and communication, in-
+cluding overlapping operators and multi-parallelism
+strategies. Beyond accuracy, Charon demonstrates
+practical impact in design-space exploration and in-
+ference optimization: in a case study on LLaMA-3
+70B, it automatically discovered an inference deploy-
+ment configuration that improved system throughput
+over a manually-tuned baseline.
+2
+
+=== Page 3 ===
+2 Background and Motivation
+Modern LLMs are based on a decoder-only trans-
+former architecture shown in Figure 2(a) [18], com-
+posed of stacked blocks with self-attention and a feed-
+forward network, which is often a Mixture-of-Experts
+(MoE) for parameter efficiency[3]. As shown in Fig-
+ure 2(b), their execution workflows differ: training
+involves iterative forward, backward, and optimizer
+passes, while inference operates a forward pass ac-
+celerated by the key-value (KV) cache. The scale
+of these models necessitates both sophisticated par-
+allelism strategies to distribute the workload and
+extensive performance tuning to optimize execution
+on large clusters.
+2.1 Parallelism Strategy
+Due to the enormous LLM model sizes and data
+involved, training and inference of LLMs almost in-
+variably require large GPU clusters. Consequently,
+parallelism strategies are critical to achieving accept-
+able performance. Figure 2(b) right part shows the
+most widely used parallelism strategies: Tensor par-
+allelism (TP) partitions individual weight tensors
+across multiple GPUs, allowing for wide hidden di-
+mensions at the expense of additional all-reduce com-
+munication during each layer. Data parallelism (DP)
+traditionally replicates the full model on each GPU
+and splits the input mini-batch, synchronizing gradi-
+ents across replicas after the backward pass. Modern
+variants such as ZeRO [14] and FSDP [22] divide op-
+timizer states, gradients, and parameters themselves
+across devices to optimize per-GPU memory usage
+and communication volume. Expert parallelism (EP)
+applies specifically to mixture-of-experts models, dis-
+tributing different expert sub-networks across GPUs
+and incurring routing and load-balancing overhead.
+Pipeline parallelism (PP) divides the transformer
+blocks into sequential stages, assigning each stage to
+a different GPU. Micro-batches flow through these
+stagestokeepallGPUsutilized. Sequenceparallelism
+(SP) slices the input token sequence across devices
+for normalization layers, accelerating normalization
+calculation at the cost of additional communication.
+Modern deployments typically mix two to four of
+these schemes simultaneously[9, 13, 16, 17]. For ex-
+ample, TP is used for GPUs in a node, PP is used for
+inter-node, and EP is used for MoE routing. Each
+combination imposes distinct demands on computa-
+tion resources as well as intra-node and inter-node
+connections, making the design choice very hard for
+software engineers.
+EmbeddingLayer
+TransformerBlock1
+TransformerBlockN
+LMHeadLayer
+…
+Norm Layer
+Feed
+Forward
+Key (K)
+Generation
+Query (Q)
+Generation
+Value (V)
+Generation
+Norm Layer
+MoE
+Activation
+Linear
+Linear
+…
+(a)
+(b)
+TensorParallel(TP)
+Attention
+Multi-head
+Grouped
+Query
+DataParallel(DP)ExpertParallel(EP)
+PipelineParallel(PP) SequenceParallel(SP)
+TrainingSteps
+Optimizer
+InputSequence
+Output Expected
+Weight
+Error
+Gradient
+①Forward②Backward③Update
+Inference/ServingSteps
+Input
+Sequence
+Prefill
+Stage
+Key-Value(KV)Cache
+Decode
+Stage
+Output
+Sequence
+ParallelismStrategies
+GPU1
+GPU2
+x =
+x
+x
+GPU1
+GPU2
+Model
+GPU1
+GPU2
+FFN1
+FFN2
+GPU1
+GPU2
+Layer1 Layer2Micro
+batch NormSequence
+token
+GPU1
+GPU2
+(c)Profiling-basedTuningFlow
+InitialConfiguration
+OptimizedConfiguration
+GPUGPU
+Cluster-level
+Profiling
+Experiments
+Experienced
+Engineers
+Multiple
+iterations
+Profiling-basedTuningCostonClusterwith>10kGPUs
+1
+10
+100
+1000
+10000
+1.E+02
+1.E+03
+1.E+04
+1.E+05
+1.E+06 GPU Hours
+Design Space
+GPU Types+Parallelism 
+Types
++Parallelism 
+Sizes*
+102
+104
+105
+106
+103
+TotalGPUHours
+TotalDesignSpaceSize
+*Supposeforeachparallelismtype,theparallelsizehas4choices
+Figure 2LLM architecture, execution workflows, and
+tuning challenges: (a) Decoder-only Transformer stack
+with QKV attention and optional MoE in the feed-forward
+layers.(b) Training (forward, backward, update) and infer-
+ence (prefill, decode with KV cache) workflows alongside
+key parallelism schemes. (c) Iterative profiling-based tun-
+ing loop and its GPU-hour/design-space explosion on
+large GPU clusters.
+2.2 Tuning at Cluster Scale
+Considering the scale of modern LLMs, tuning con-
+figurations to achieve optimal training and inference
+performance is essential before deploying models to
+production clusters. Profiling tools, such as PyTorch
+Profiler and NVIDIA Nsight Systems, are widely
+adopted for diagnosing performance bottlenecks in
+large-scale LLM workloads. By instrumenting both
+forward and backward passes, these profilers cap-
+ture fine-grained metrics including operator execution
+time, GPU SM and memory utilization, kernel-launch
+overhead, and inter-device communication latency.
+With this information, engineers can identify bottle-
+necks such as inefficient attention kernels, suboptimal
+memory accesses, or network contention and deter-
+mine which configuration parameters (e.g., batch size,
+fusion settings, or communication overlap) require
+adjustment.
+Despite the detailed visibility offered by modern pro-
+3
+
+=== Page 4 ===
+NativeModel
+CharonSimulationPlatform
+SystemConfig
+TimelineTrace
+SimulationSummary
+HuggingFace
+vLLM
+Custom(PyTorch)
+GPU/NPUInfo
+Interconnect
+ParallelismPlan
++
+•Flops/MFU
+•Memory
+•Power
+•Latency
+Graph-basedFrontend
+ModelInformation+Configuration
+Multi-engineBackend
+InputDescription SimulationResults
+LinearLinear
+Matmul
+Scale
+GraphGeneration
+Softmax
+GraphManipulation
+GraphExecution
+Trace
+OperatorSimulator
+ProfilingEngine
+PredictionEngine
+AnalyticalEngine
+Fused
+Engine
+Computation
+OpOverlapProcessor
+DesignExplorer
+ DesignExploration
+•Single Layer Trace
+•3D Timeline Trace
+•BestConfig
+DesignParameters
+Rule-basedPruningTool
+…
+… …
+Param1
+Param2
+Param3
+… Prune
+Configuration
+bar手画一下
+TODO:SyncColorwithHooker CommunicationOpSimulator
+Communication
+Figure 3Architecture overview of proposed Charon simulator. The system consists of a graph-based frontend that
+constructs forward and backward computation graphs while applying optimizations and analyses; a multi-engine
+backend that accurately simulates both computation and communication operators; and a design explorer that searches
+for the optimal configuration through guided pruning.
+filing tools, tuning training and inference configura-
+tions at cluster scale remains highly challenging. As
+shown in Figure 2(c), conventional tuning workflow
+typically follows an iterative “profile–analyze–tune”
+way: engineers run workloads, collect traces, interpret
+results, and manually adjust settings. However, with
+ever-growing model sizes and emerging optimization
+techniques, the design space for large LLMs has ex-
+pandeddramatically. Evenrestrictingtheexploration
+to GPU model selection and parallelism strategies can
+involve thousands of possible configurations[5]. Eval-
+uating a single design point on a large-scale cluster
+needs repeated runs (e.g., cold launches and multiple
+warm-ups) and can consume hundreds of GPU hours.
+The total exploration cost can approach106 GPU
+hours, even under a constrained search that evaluates
+only four parallelism sizes per parallelism type. Con-
+sequently, exhaustive profiling-based tuning becomes
+prohibitively time-consuming and economically infea-
+sible.
+2.3 Related Works
+Several simulators have been developed to estimate
+the performance of LLM training and inference across
+large-scale systems. ASTRA-Sim [ 21] provides a
+purely analytical framework for distributed simula-
+tion, but requires users to manually construct work-
+load models using predefined templates, limiting ease
+of use and model fidelity. For training simulation,
+SimAI [19] adopts a profiling-based, operator-level
+performance model for computation while estimating
+communication at the layer level through either ana-
+lytical bandwidth models or a slower network-package
+simulator. Recent work [7] extends SimAI by adding
+support for custom device groups and interconnect
+topologies, yet still depends on mocked models as
+input. Lumos [10] and Echo [4] provide operator-
+level simulation for training but rely on profiling
+or synthetic traces as workload inputs, introducing
+additional preprocessing overhead. For inference sim-
+ulation, Vidur [1] achieves high accuracy by profiling
+both computation and communication, but requires
+models to be rebuilt within its own simulation frame-
+work. LLMServingSim [2] extends ASTRA-Sim to
+integrate hardware-specific simulators such as NPUs
+and PIM devices, but still relies on manually crafted
+workload descriptions.
+3 Methodology
+3.1 Architecture Overview
+Figure 3 presents the high-level architecture of
+Charon, our unified “all-in-one” simulator for LLM
+training, inference and design-space exploration.
+Charon ingests native models such as HuggingFace,
+vLLM, or customized PyTorch models, alongside a
+system configuration describing GPU or even NPU
+specifications, interconnect topology, and desired par-
+allelism schemes. From these inputs, Charon pro-
+duces both high-level summaries (e.g., FLOPs, model-
+FLOPs utilization, memory footprint, and power or
+TDP estimates) and, if enabled, fine-grained execu-
+tion traces in the style of the PyTorch Profiler (in-
+cluding single-layer timelines and full 3D multi-GPU
+traces).
+Charon’s architecture comprises three key compo-
+nents. The frontend parses the model graph and
+applies a sequence of compiler-style passes—tracing
+operators, injecting parallelism, scheduling execu-
+tion, and analyzing results. The backend exe-
+cutes operator-level simulations via interchangeable
+workers for profiling-based, analytical-based, and
+4
+
+=== Page 5 ===
+prediction-based simulations. It also features an over-
+lap processor to capture communication-computation
+and communication-communication overlapping and
+estimate the slowdown for overlapped operators. Fi-
+nally, the parameter searcher explores the config-
+uration space with suboptimal settings pruning to
+identify optimal designs regarding cost and perfor-
+mance.
+3.2 Graph-based Frontend
+Charon’s frontend is the interface between user’s in-
+put and the operator-level backend simulator with a
+computational graph-oriented design. As Figure 4 il-
+lustrates, the frontend turns the simulation input into
+a computational graph and applies multiple graph
+manipulations to simulate the optimization or ana-
+lyze the results.
+(a) Graph Generation with Native PyTorch Model:
+To maximize usability and support a wide variety of
+model architectures, Charon is designed to directly
+accept native PyTorch models as its simulation input.
+Since modern LLM architectures typically comprise
+multiple duplicated Transformer blocks, Charon ex-
+tracts and simulates only a single transformer decoder
+block. This approach substantially accelerates sim-
+ulation while preserving architectural fidelity and
+numerical accuracy. However, this single-block sim-
+ulation is a performance optimization primarily for
+symmetric architectures. For asymmetric models or
+workloads requiring PP, Charon traces distinct lay-
+ers into separate FX graphs according to the model
+definition and schedules them explicitly per rank, en-
+suring that all PP ranks and inter-stage dependencies
+are accurately modeled. Furthermore, to enable dis-
+aggregated serving support, Charon can trace prefill
+and decode operations into independent computation
+graphs. This allows simulation of heterogeneous exe-
+cution where different stages are mapped to different
+hardware clusters.
+The input model can originate from widely used
+frameworks such as Hugging Face or vLLM, or from
+any customized PyTorch implementation. This flexi-
+bility is enabled by the Graph Tracer shown in Fig-
+ure 4(a), which automatically converts the native
+model into an intermediate computation graph us-
+ing torch.fx.symbolic_trace or torch.compile.
+Specifically, theGraphTracerfirstsymbolicallytraces
+the model to capture its operator-level structure, then
+leverages the compilation pipeline intorch.compile
+to optimize and lower the traced module into a unified
+forward compute graph suitable for simulation.
+For training tasks that also need the backward com-
+torch.compile
+torch.fx.symbolic_traceTorchPartitioners
+(a)
+torch.compile
+torch.fx.symbolic_trace
+NativePyTorchModels
+(Decoder-basedLLMs)
+Embedding
+LMHead
+Transformer
+Transformer
+...
+SingleTran sfo rmerBlock
+TorchAOTAutograd
+RawForwardGraph
+DummyInputTensor
+DummyLossFunction
++
+GraphOptimize+Refine JointGraph(FWD+BWD)
+TorchPartitioner
+Forward
+Graph
+Backward
+Graph
+BWDPostprocess
+(b)
+TracedFWD/BWDGraph
+SimulationResults
+OptimizationPasses
+Passes
+OperatorFusion
+Recompute/Reorder
+...
+OperatorRewrite
+ParallelismPasses
+ShardPass(TP/EP/SP)
+PipelineParallelPass
+DataParallelPass
+Passes...
+AnalysisPasses
+MFUAnalysis
+MemoryAnalysis
+TimelineAnalysis
+Passes...
+Figure 4Frontend architecture of proposed Charon sim-
+ulator. (a) Trace and generate forward and backward
+groups from native PyTorch models. (b) Apply compiler-
+style passes for optimizations and analyses.
+putational graph, the graph tracer is designed to au-
+tomatically generate the backward graph utilizing
+the torch._function.aot_autograd feature. To
+achieve this, a dummy loss function as well as a fake
+input tensor will be added to the forward graph to
+allow dynamic output shapes. After tracing, the joint
+graph is processed through several passes to enhance
+its structure and semantics. These include adding ten-
+sor metadata, renaming input and weight nodes, and
+removing useless operations such as view, detach, and
+other operations that do not alter the tensor’s shape
+or data type. The joint graph is then partitioned
+into separate forward and backward graph modules
+using the default_partition function. The back-
+ward graph undergoes further refinement, including
+decomposing auto-functionalized operations, remov-
+ing self-clone operations, and eliminating dead code.
+Through this series of well-orchestrated steps, graph
+tracer efficiently and automatically generates a clean
+and optimized backward graph for the given forward
+computation.
+(b) Graph-based Optimization and Parallelism:Mod-
+ern LLMs usually contain multiple optimizations with
+different parallelism strategies during their training
+and inference flow. In order to support various op-
+timizations and parallelisms as well as prepare for
+adopting the upcoming techniques in the future, we
+proposed a compiler-style design where optimizations
+and parallelisms are abstracted as graph manipu-
+lation passes that apply directly to computational
+graphs illustrated in Figure 4(b). Adding or removing
+the pass will enable or disable a specific optimization
+5
+
+=== Page 6 ===
+for simulation tasks, and different passes can be freely
+combined to enable joint optimizations.
+Operator-level optimizations in Charon, such as op-
+erator rewrite and fusion, are implemented through a
+flexible match-and-replace graph manipulation frame-
+work. During this optimization pass, Charon tra-
+verses the computation graph to identify target
+node patterns that meet predefined matching cri-
+teria. Once matched, the framework modifies the
+node types and attributes to apply the intended op-
+timization, such as merging multiple operators into
+one or replacing inefficient operator forms. This de-
+sign enables high extensibility since new optimization
+rules can be easily added by defining custom match
+patterns and their corresponding transformation ac-
+tions. Moreover, for quantization, Charon can either
+add a quantization pass to change the precision of the
+node or directly trace quantized models, enhancing
+usability and coverage given the widespread adoption
+of quantization in modern LLM implementations.
+Leveraging its pass-based modular design,
+Charon supports multi-parallelism by sequen-
+tially applying the corresponding passes to the
+computation graph, providing flexible composition
+of hybrid parallelism strategies. As illustrated
+in Section 2, modern LLMs typically employ
+multiple forms of parallelism when deployed across
+multi-GPU systems. These parallelisms introduce
+collective communication operations to coordinate
+computation and data movement among devices.
+To model the resulting overhead, Charon inserts
+communication operators into the computation
+graph through a series of dedicated parallelism
+passes:
+(i) Shard-based parallelisms such as TP, SP, and EP
+partition tensors and their associated computation
+operators across multiple GPUs. Charon traces the
+computation graph, adjusts the tensor shapes of the
+sharded operators, and inserts the corresponding com-
+munication operators (e.g.,all_reduce,all_gather,
+reduce_scatter) before and after each sharded opera-
+tion according to the selected strategy.
+(ii) PP partitions the training or inference workflow
+into multiple stages, with explicit dependencies across
+devices. In Charon, this is implemented through
+a schedule pattern generator that constructs inter-
+stage dependencies and insertssend/recvcommu-
+nication operators to model data transfer between
+stages. Charon supports both the classic 1F1B sched-
+ule and the DualPipe schedule with communication
+and computation overlapping. The resulting depen-
+dency graph and communication events are logged
+for subsequent timeline analysis and visualization.
+(iii) DP partitions the training dataset across GPUs,
+allowing each device to compute gradients indepen-
+dently. Charon supports simulation of distributed
+data-parallel frameworks such as PyTorch DDP,
+FSDP, and ZeRO. For DDP, the gradients are syn-
+chronized via collective communication operations,
+which is explicitly modeled by inserting communi-
+cation operators in Charon. FSDP and ZeRO are
+further supported in Charon through additional pa-
+rameters and/or optimizer state sharding, optimizer
+state synchronization, and prefetching analysis.
+(c) Pass-based Multi-granularity Analysis:Charon is
+designed to provide simulation results at multiple
+granularities for multiple aspects, including coarse-
+grained system-level results such as model FLOPs
+utilization, exposed parallelism communication over-
+head, memory usage, as well as fine-grained operator-
+level results such as operator latency, efficiency and
+profiler-style traces. Charon supports customizing
+the analysis flow with pass-based analyzers, making
+it flexible and easy to add new metrics.
+The Charon analyzer supports both dependency-
+independent and dependency-aware metrics through
+unified graph-based processing. For metrics that
+do not require operator dependencies such as model
+FLOPs utilization, the analyzer operates directly on
+the computation graph, computing per-node met-
+rics and aggregating them into system-level results
+through graph traversal. For dependency-aware met-
+rics, such as detailed timeline traces, the analyzer
+interacts with the Charon backend to obtain the start
+and end times of each operator. These are then re-
+fined by the operator scheduler, which accounts for
+inter-operator dependencies (e.g., pipeline stages) to
+generate an accurate execution timeline. From this
+dependency-adjusted timeline, profiler-style traces
+and latency-related metrics (e.g., block latency, end-
+to-end latency, and FLOPs utilization) are derived.
+Moreover, optimization techniques such as opera-
+tor recomputation and communication–computation
+overlap should be analyzed both before and after
+optimization to quantify their effects. For exam-
+ple, FLOPs analysis is performed before operator
+recomputation to capture accurate model-level com-
+pute costs. Since both optimization and analysis are
+applied directly on computation graphs, Charon na-
+tively supports interleaving them within the same
+simulation flow, thereby improving efficiency, consis-
+tency and flexibility.
+6
+
+=== Page 7 ===
+Accurate peak memory estimation is critical for re-
+liable LLM simulation, as underestimation can lead
+to out-of-memory (OOM) errors, and overestima-
+tion may result in suboptimal configurations. Peak
+memory consumption in large-scale training typically
+arises from optimizer states, model weights and gra-
+dients, activation tensors, and temporary buffer al-
+locations. Unlike layer-level simulators which can
+only estimate memory usage based on static ten-
+sor sizes (e.g., optimizer states and weights/gradi-
+ents), Charon’s graph-based design also enables pre-
+cise modeling of activation and temporary memory by
+analyzing the liveness of each tensor during gradient
+computation. The backward computational graph
+allows Charon to perform liveness-based traversal to
+determine exactly when each intermediate tensor is
+allocated, used, and freed across the backward pass.
+Consequently, it can reproduce realistic GPU mem-
+ory behavior, including temporary tensor reuse and
+deallocation timing that directly influence the peak
+memory footprint. This fine-grained graph analysis
+is essential for evaluating memory-critical training
+configurations (e.g., ZeRO, FSDP, or selective acti-
+vation checkpoint strategies), where peak memory is
+reached during backward computation. By leveraging
+this operator-level liveness modeling, Charon achieves
+high-fidelity GPU memory simulation that cannot be
+captured by non-graph-based simulators.
+3.3 Multi-engine Driven Backend
+The backend of Charon is responsible for simulating
+a single computation or communication operator. As
+Figure 5 shows, Charon integrates profiling-based,
+prediction-based, and analytical-based backend en-
+gines, as well as a fused backend engine that can
+use multiple different backend engines to maximize
+the balance between simulation speed and simulation
+accuracy. Additionally, Charon supports common
+numerical precision formats like FP32, BF16, FP16,
+FP8, and INT8 by maintaining precision-specific op-
+erator profiles or analytical estimates. Different pre-
+cision choices impact compute efficiency along with
+memory usage and communication volume. The simu-
+lator explicitly models these factors through precision-
+aware kernel latency and bandwidth scaling. It also
+estimates the precision-aware memory footprint for
+activation, parameter, and temporary buffer sizes.
+(a) Profiling Engine:The profiling engine simulates
+each operator by executing it on the target hardware
+and profiling runtime, providing the most accurate
+latency at the cost of higher simulation overhead.
+For GPU workloads, Charon automatically generates
+profiling tasks for each operator, dispatches them
+torch.compile
+torch.fx.symbolic_trace
+TorchPartitioners
+InitialConfiguration
+OptimizedConfiguration
+GPU
+GPU
+Cluster-level
+Profiling
+Experiments
+Experienced
+Engineers
+Multiple
+iterations
+ProfilingEngine
+PredictionEngine
+Profiling
+Database
+Operator
+Type+Shape
+Profile
+Store
+ResultsLookupResults
+Random
+Forest
+Predictor
+TrainOperator
+Type+Shape
+Results
+AnalyticalEngine
+Computation Analysis: Roofline
+Perf=min
+PeakPerformance
+PeakBandwidthx
+Arithmetic Intensity
+CommunicationAnalysis
+ClusterSimulator
+CommType+Size
+ClusterInfo
+Link
+Utilization
+Comm
+Latency
++
+NVLink
+IB
+GPU GPU
+GPU GPU...
+...
+...
+...
+FusedEngine
+Profiling
+EngineSupport?
+Results
+Operator
+Prediction
+EngineSupport?
+Analytical
+Engine
+Y
+N
+Y
+N
+Figure 5Backend architecture of Charon simulator. Each
+operator can be simulated using a profiling, prediction, or
+analytical engine. A fused backend enables mixed-engine
+execution, allowing different operators to be simulated
+by different engines.
+to our in-house GPU cluster, and records latency
+once execution completes. Since profiling every oper-
+ator instance from scratch is prohibitively expensive,
+Charon integrates a profiling database that caches
+measured results for common operators and input
+shapes. Upon receiving a simulation request, the
+profiling engine first queries this database; if a match-
+ing operator–shape pair exists, the cached latency
+is reused directly, thereby significantly improving
+simulation efficiency.
+(b) Prediction Engine:The prediction engine esti-
+mates operator latency directly from operator type
+and input tensor shape using lightweight machine
+learning models. Its primary goal is to provide fast
+latency estimation, especially for unseen input shapes
+not covered in the profiling database. In Charon,
+each type of operator is associated with a compact
+random-forest–based predictor trained on data from
+the profiling database. This design eliminates the
+need for real-time hardware execution while preserv-
+ing high accuracy across diverse operator shapes,
+achieving substantial acceleration in large-scale simu-
+lation workloads.
+(c) Analytical Engine:The analytical engine analyzes
+the execution time of the operator with mathemati-
+cal modeling according to the operator computation
+and memory requirement, as well as the hardware
+capability. For computation operators, Charon’s an-
+alytical engine utilizes the roofline [20] model, which
+calculates the computation time and memory access
+time on targeted hardware and takes whichever is
+longer as the final computation time for this opera-
+tor. Hardware FLOPs and memory bandwidth are
+pre-configured according to the simulation hardware,
+and operator computation FLOPs/memory accesses
+are computed on-the-fly according to its input shape.
+For communication operators, Charon employs a hi-
+7
+
+=== Page 8 ===
+erarchical link-centric model to ensure cross-platform
+portability and accuracy. Instead of relying on theo-
+reticalspecifications, Charonmodelstheclustertopol-
+ogy using calibrated per-hop latency and effective
+bandwidth derived from profiling. Charon supports
+both Ring and Tree collective communication algo-
+rithms across diverse topologies (e.g., Ring, Switch,
+and Mesh). The analytical engine decomposes high-
+level collective operations into physical link-level data
+transfers. For each link, the latency is calculated by
+aggregating the calibrated handshake latency and the
+transmission latency based on data size and effective
+bandwidth. This granular approach allows Charon to
+precisely evaluate congestion based on bandwidth
+sharing and topology constraints.
+(d) Fused Engine:Fused engine in Charon is designed
+to integrate multiple simulation backends within a
+single execution flow. It enables an adaptive trade-
+off between simulation speed and accuracy, while
+maintaining compatibility with emerging models and
+newly introduced operators. Operators lacking pro-
+filing and prediction data can be executed using the
+analytical engine, while others are simulated using
+the profiling-based or prediction-based engines. This
+flexibility is implemented through a prioritized fall-
+back mechanism: each engine maintains a registry of
+supported operators, and the fused engine dynami-
+cally selects the highest-priority backend available for
+each operator, falling back to lower-priority engines
+when necessary. This design ensures robust coverage
+of heterogeneous workloads without sacrificing overall
+simulation fidelity or scalability.
+3.4 Operator Overlap
+Modern LLM training and inference frameworks usu-
+ally overlap communication operators with either
+compute operators or other communication operators
+to improve overall performance, which needs to be
+carefully handled during the simulation to get fine-
+grained accurate traces. Charon integrates a coarse-
+grained ratio-based slowdown model for all over-
+lapped operators, as well as a fine-grained bandwidth-
+aware model for communication-communication over-
+lap.
+The ratio-based slowdown model applies slowdown
+factors to the overlapped part of two operators.
+The slowdown factor is engineered from profiling
+data with targeted hardware clusters. For compute-
+communication overlap, two separate slowdown fac-
+tors are used for computation and communication
+operators. And for communication-communication
+overlap, the same slowdown factor is shared for two
+Time
+CommOp0
+IB:50GB/s
+CommOp1
+NVLink:200GB/s
+CommOp1
+200GB/s
+50GB/s
+Time
+Comm
+Op0
+Comm
+Op1
+Comm
+Op2
+(a)Original
+200GB/s
+50GB/s
+50GB/s
+200GB/s
+Time
+Comm
+Op0
+Comm
+Op1
+Comm
+Op2
+(b)AfterCongestion
+200GB/s
+50GB/s
+25GB/s
+40GB/s
+100GB/s
+NVLink IB Slowdown
+50GB/s
+200GB/s
+NVLinkCongestionw/Op2
+IBCongestionw/Op125GB/s
+NVLink
+IB SlowdownFullSpeed
+Time
+Comm
+Op0
+Comm
+Op1
+Comm
+Op2
+Original
+50GB/s
+50GB/s
+50GB/s
+200GB/s
+(a)
+Time
+Comm
+Op0
+Comm
+Op1
+Comm
+Op2
+(b)
+Req
+BW:
+40GB/s
+25GB/s
+25GB/s
+25GB/s
+160GB/s
+40GB/s
+Op0:50
+Op1:50
+Op0:25
+Op1:25
+Congestion
+Aware
+Congest
+Aware
+ReqBW:
+Op0:50
+Op2:200
+Op0:40
+Op2:160
+Congest
+Aware
+Figure 6Bandwidth-aware communication operators
+overlap in the proposed Charon simulator, (a) shows the
+timeline of original communication operations, and (b)
+shows the timeline with congestion-aware simulation.
+communication operators. The slowdown factor only
+applies to the portion that the operator has over-
+lapped with other operators.
+A fine-grained bandwidth-aware slowdown model is
+available in Charon when using analytical engine
+for the communication-communication overlap. As
+shown in Figure 6, the slowdown for each operator
+is decided by the effective bandwidth as well as the
+link congestion in the cluster. For each portion of the
+overlapped operators, Charon checks the link conges-
+tion for each interconnect hierarchy and calculates
+the slowdown according to the effective bandwidth
+competition ratio to simulate the underlying network
+packet-level congestion control.
+3.5 Design Space Exploration
+As an LLM training and inference simulation solution,
+identifying the optimal infrastructure configuration
+for targeted tasks, such as the number of GPUs, par-
+allelism strategies, and parallelism sizes, emerges as
+a crucial application in Charon. To eliminate the
+engineering needed for the analysis of the simulation
+results in order to use Charon for design space ex-
+ploration, Charon is built in with a native search for
+the design space.
+The design space exploration begins with a targeted
+model and task, and Charon will take the entire
+design space, including different choices for GPU
+numbers and parallelism sizes from the user’s input.
+8
+
+=== Page 9 ===
+E2ETraining+Inference+Norm(RemoveNormalizedTime)
+GroundTruth Charon Astra-SIM SimAI Vidur
+NormalizedTime
+0
+0.5
+1.0
+Qwen3-8B + Megatron Llama3-8B + Megatron
+8x1 1x8 8x2
+Qwen3-8B + VeOmni
+4x4x1
+Llama3-8B + VeOmni Qwen3-30B-A3B + VeOmni
+8x1x1 1x1x8 8x1x2 2x4x2
+TPxPPxDP
+TPxDP
+8x1 1x8 8x2
+TPxDP EPxSPxDP
+4x4x2
+8x1x1 1x1x8 8x1x2 2x4x2
+X
+TPxPPxDP
+X
+X X
+X
+X
+X
+X
+Qwen3-8B + vLLM Llama3-8B + vLLM Qwen3-30B-A3B + vLLM
+TP1 TP2 TP4 TP1 TP2 TP4 TP1 TP2 TP4
+TP1 TP2 TP4 TP1 TP2 TP4 TP1 TP2 TP4
+X X X
+X X X
+(a)Training
+(b)Inference
+0
+0.5
+1.0NormalizedTTFTNormalizedTPOT NormalizedTime
+0
+0.5
+1.0
+0
+0.5
+1.0
+0
+0.5
+1.0
+-0.8%
+0
+0.5
+1.0
+Qwen3-8B + vLLM Llama3-8B + vLLM Qwen3-30B-A3B + vLLM
+0
+0.5
+1.0
+0
+0.5
+1.0
+0
+0.5
+1.0
+0
+0.5
+1.0
+0
+0.5
+1.0
+-4.3%
++3.4%
+-4.2%
++23.2%
+-2.8%
+-7.1%
++7.3%
+-2.8%
++20.2%
+-1.0%
+-6.3%
++3.3%
+-2.3%
+-8.2%
++8.1%
+-5.3%
++13.9%
+-4.9%
++9.5%
+-1.0%
+-26.0%
+-20.0%
+-4.8%
++5.4%
+-4.4%
+-28.8%
+-17.8%
+-1.0%
+-24.9%
+-17.3%
+-2.3%
+-8.2%
++8.1%
++2.3%
++10.3%
+-6.3%
+-11.3%
+-3.0%
+-8.9%
++0.04%
++0.9%
+-3.5%
+-3.5%
+-9.0%
+-9.0%
++3.3%
++1.4%
+-2.9%
+-1.5%
+-10.2%
+-5.2%
+-4.4%
+-3.4%
+-8.3%
++2.7%
++14.8%
++1.8%
++19.7%
++19.3%
++1.6%
++4.9%
++12.6%
++1.5%
++14.9%
++1.0%
++14.9%
++23.3%
++5.3%
+-9.8%
+Figure 7End-to-end time comparison results for Charon and other simulators against measurement ground truth. “X”
+means the simulator cannot support configurations or cannot give valid results.
+To maximize search efficiency, the design exploration
+toolsupportspruningsearchspacesaccordingtorules.
+Users can pre-define the known inefficiency cases
+in Charon and the design space exploration tools
+can prune the corresponding sub-spaces by directly
+skipping the simulation.
+4 Experiments
+In this section, we demonstrate the capability and
+accuracy results of the proposed Charon simulator.
+4.1 End-to-end Simulation Accuracy
+We evaluated the simulated end-to-end runtime of
+Charon against existing LLM simulators as well as
+the ground truth measurements on both training and
+inference tasks. To demonstrate Charon’s capabili-
+ties, we selected two dense models, Qwen3-8B and
+LLaMA3-8B, and one MoE model, Qwen3-30B-A3B,
+as representative case studies. For training simu-
+lation, we benchmarked Charon against Astra-SIM
+2.0 [21] and SimAI [19], measuring simulation per-
+formance under the Megatron [16] and VeOmni [11]
+training frameworks. For inference simulation, we
+compared Charon with Vidur [1] by simulating work-
+load within the vLLM[8] framework. All baseline
+simulators are examined to fix minor bugs and sup-
+port the new Qwen3 and Llama3 models, as well
+as re-calibrated according to the profiling results to
+make a fair comparison.
+As shown in Figure 7, Charon achieved the best
+end-to-end time accuracy among both training and
+inference tasks with different models and different
+frameworks. For training tasks, Charon’s operation
+graph-based simulation can accurately simulate the
+time of each operator level with accurate backends,
+as well as satisfy the operation of different frame-
+works. Therefore, the end-to-end time is more ac-
+curate than the analytical-based simulator Astra-
+SIM. For comparison with SimAI, although both use
+profiling-based backends for computation operators,
+SimAI simulates the communication based on layer-
+level information since its communication simulation
+is based on Astra-SIM 1.0 [15]. This will lead to
+inaccuracy in handling communication overlaps. For
+Inference tasks, both Charon and Vidur can pro-
+vide accurate time-to-first-token (TTFT), as Vidur
+uses profiling-based computation and communica-
+tion simulation. However, for time-per-output-token
+(TPOT), Vidur cannot produce very accurate results
+because its predication engine is not accurate enough
+for small operations.
+9
+
+=== Page 10 ===
+Table 2Simulation breakdown for Qwen3-8B. “Prof”
+denotes profiling results and “Sim” denotes Charon simu-
+lation results, all results are in microseconds(us).
+(a)Training breakdown with TP8 on Nvidia Ampera
+GPU, F indicates forward steps, and B indicates backward
+steps.
+Operators Prof(F) Sim(F) Prof(B) Sim(B)
+Attention 1842 1770 30275 30329
+Feed-Forward 6589 6490 40280 38430
+Others 3842 3788 8743 8658
+All-Gather 13180 12980 13130 12980
+Reduce-Scatter 13876 12980 14500 12980
+(b)Inference breakdown with TP1 on Nvidia Hopper
+GPU, P indicates prefill steps, and D indicates decode
+steps.
+Operators Prof(P) Sim(P) Prof(D) Sim(D)
+Attention 3923 3906 58.206 72.1
+Feed-Forward 9232 9195 93.47 109
+Others 141 142 6.84 12
+4.2 Time Breakdown
+To demonstrate the fine-grained simulation accuracy
+of the proposed Charon simulator, we provide a de-
+tailed breakdown of simulation time across individual
+operations. For training evaluation, we analyze the
+operation-level simulation of the Qwen3-8B model
+executed on the VeOmni framework under TP8. For
+inference evaluation, we report the corresponding
+breakdown using the Qwen3-8B model in the vLLM
+framework.
+Table 2a presents the breakdown of the training sim-
+ulation results, while Table 2b summarizes the corre-
+sponding inference simulation results. These results
+demonstrate that Charon achieves high simulation
+accuracy not only at the end-to-end but also at the
+operator-level granularity.
+To further validate the fine-grained accuracy of
+AcrossdifferentGPUsanddifferentscale
+GroundTruthCharon
+H800A100H20L20(a)DifferentGPUModels
+NormalizedTime1
+0 6496480011520(b)DifferentNumberofH800GPUs
+1
+0NormalizedTime+0.71%-2.82%-4.98%-0.37%+0.71%+2.06%-5.35%-3.74%
+SmallScaleLargeScaleTrainingInference
+GroundTruthCharon
+HopperAmpere(a)DifferentGPUModels
+NormalizedTime1
+0 1x1.5x75x180x(b)NormalizedNumberofGPUs
+1
+0NormalizedTime+0.71%-2.82%-4.98%-0.37%+0.71%+2.06%-5.35%-3.74%
+SmallScaleLargeScaleTrainingInferenceHopperAda
+ AnalyticalPredictionAnalyticalPredictionAnalyticalPrediction
+RelativeDifference(%)
+-12.5-10.0-7.5-5.0-2.502.55.0
+-10-8-6-4-2024
+-40-200204060
+MAE1.44%
+MAE6.60%
+MAE1.12%
+MAE5.70%MAE2.22%MAE31.84%
+Linear (N=390)RMS Norm (N=80)FlashAttn-3 (N=80)
+Memory(GB)0
+MaxMemoryAllocatedMaxMemoryReservedTotalMemory20406080
+68.9369.20(+0.39%)
+ActualTrainingCharon
+75.9676.18(+0.29%)78.2178.18(-0.03%)
+(a)GeneratedTracewithCharonSimulator
+(b)ProfiledTracewithvLLM
+Figure 8Comparison of simulation traces generated by
+Charon and profiled vLLM serving traces. The traces
+represent a single layer extracted from the full-model
+simulation and profiling of Qwen3-8B.
+AcrossdifferentGPUsanddifferentscale
+GroundTruthCharon
+H800A100H20L20(a)DifferentGPUModels
+NormalizedTime1
+0 6496480011520(b)DifferentNumberofH800GPUs
+1
+0NormalizedTime+0.71%-2.82%-4.98%-0.37%+0.71%+2.06%-5.35%-3.74%
+SmallScaleLargeScaleTrainingInference
+GroundTruthCharon
+HopperAmpere(a)DifferentGPUModels
+NormalizedTime1
+0 1x1.5x75x180x(b)NormalizedNumberofGPUs
+1
+0NormalizedTime+0.71%-2.82%-4.98%-0.37%+0.71%+2.06%-5.35%-3.74%
+SmallScaleLargeScaleTrainingInferenceHopperAda
+ AnalyticalPredictionAnalyticalPredictionAnalyticalPrediction
+RelativeDifference(%)
+-12.5-10.0-7.5-5.0-2.502.55.0
+-10-8-6-4-2024
+-40-200204060
+MAE1.44%
+MAE6.60%
+MAE1.12%
+MAE5.70%MAE2.22%MAE31.84%
+Linear (N=390)RMS Norm (N=80)FlashAttn-3 (N=80)
+Memory(GB)0
+MaxMemoryAllocatedMaxMemoryReservedTotalMemory20406080
+68.9369.20(+0.39%)
+ActualTrainingCharon
+75.9676.18(+0.29%)78.2178.18(-0.03%)
+(a)GeneratedTracewithCharonSimulator
+(b)ProfiledTracewithvLLM
+Figure 9Experimental results for Charon memory pre-
+diction accuracy during Qwen3-30B-A3B MoE model
+training (FSDP=8, batch_size=2, seqlen=8192).
+Charon, we compared the simulation-generated execu-
+tion traces against hardware-profiled traces. Figure 8
+illustrates a single transformer layer trace extracted
+from a full-model simulation of Qwen3-8B alongside
+the corresponding profiled trace from vLLM serv-
+ing. The comparison demonstrates that Charon accu-
+rately simulates operator-level latency and the time-
+line traces, closely matching the actual hardware
+execution behavior.
+4.3 Memory Prediction Accuracy
+Beyond execution time, accurate GPU memory esti-
+mation is critical for large-scale deployments, partic-
+ularly for Mixture-of-Experts (MoE) model training,
+where dynamic routing introduces complex memory
+access patterns. We validated Charon’s memory sim-
+ulation fidelity during the training of the Qwen3-
+30B-A3B MoE model on 8 GPUs (configured with
+FSDP=8, a batch size of 2, and a sequence length
+of 8192). As shown in Figure 9, Charon achieves
+high precision in predicting memory dynamics per
+GPU. By incorporating calibrated collective commu-
+nication buffer overheads and dynamic fragmentation
+effects, the simulation errors for the maximum allo-
+cated memory, maximum reserved memory, and total
+memory footprint are merely +0.39%, +0.29%, and
+-0.03%, respectively. This confirms Charon’s capabil-
+ity to reliably capture realistic memory allocations
+and provide a faithful representation of the actual
+memory footprint during complex MoE training.
+4.4 Backend Ablation Evaluation
+To demonstrate the effectiveness of our hybrid multi-
+engine backend, we conducted an ablation study com-
+paring the simulation accuracy of the analytical en-
+gine (Roofline model) versus the prediction engine for
+unseen tensor shapes. Figure 10 presents the statisti-
+cal deviation of prediction accuracy for Linear, RM-
+10
+
+=== Page 11 ===
+AcrossdifferentGPUsanddifferentscale
+GroundTruthCharon
+H800A100H20L20(a)DifferentGPUModels
+NormalizedTime1
+0 6496480011520(b)DifferentNumberofH800GPUs
+1
+0NormalizedTime+0.71%-2.82%-4.98%-0.37%+0.71%+2.06%-5.35%-3.74%
+SmallScaleLargeScaleTrainingInference
+GroundTruthCharon
+HopperAmpere(a)DifferentGPUModels
+NormalizedTime1
+0 1x1.5x75x180x(b)NormalizedNumberofGPUs
+1
+0NormalizedTime+0.71%-2.82%-4.98%-0.37%+0.71%+2.06%-5.35%-3.74%
+SmallScaleLargeScaleTrainingInferenceHopperAda
+ AnalyticalPredictionAnalyticalPredictionAnalyticalPrediction
+RelativeDifference(%)
+-12.5-10.0-7.5-5.0-2.502.55.0
+-10-8-6-4-2024
+-40-200204060
+MAE1.44%
+MAE6.60%
+MAE1.12%
+MAE5.70%MAE2.22%MAE31.84%
+Linear (N=390)RMS Norm (N=80)FlashAttn-3 (N=80)
+Memory(GB)0
+MaxMemoryAllocatedMaxMemoryReservedTotalMemory20406080
+68.9369.20(+0.39%)
+ActualTrainingCharon
+75.9676.18(+0.29%)78.2178.18(-0.03%)
+(a)GeneratedTracewithCharonSimulator
+(b)ProfiledTracewithvLLM
+Figure 10Statistical indicators of analytical engine and
+prediction engine accuracy deviation forN unseen Linear,
+RMSNorm, and FlashAttn-3 operators.
+SNorm, and FlashAttention-3 operators. While the
+analytical engine provides reasonable estimates for
+simpler kernels like Linear and RMSNorm, it strug-
+gles with complex operators, exhibiting a 31.84%
+Mean Absolute Error (MAE) for FlashAttention-3.
+In contrast, the prediction engine consistently main-
+tains high accuracy across all operators, achieving an
+MAE of 1.44%, 1.12%, and 2.22%, respectively. This
+highlights the prediction engine’s superior capability
+in generalizing to complex, unseen workloads without
+relying on pure analytical approximations.
+4.5 Across Different GPU and Cluster
+Scale
+We further evaluated Charon across different GPU ar-
+chitectures as well as both small-scale and large-scale
+clusters to demonstrate its versatility and scalability.
+To this end, we selected several in-house profiling
+experiments targeting both training and inference
+performance debugging, and configured Charon to
+simulate these scenarios. We then compared the end-
+to-end latency per training or inference step between
+the profiling measurements and the corresponding
+simulation results.
+Figure 11 reports the normalized end-to-end latency
+per training and inference step. As shown in Fig-
+ure 11(a), Charon consistently achieves accurate end-
+to-end simulation across diverse GPU models, cover-
+ing both Nvidia Hopper / Ampere (H800/A100) train-
+ing GPUs as well as Nvidia Hopper / Ada Lovelace
+(H20/L20) inference GPUs and achieving overall sim-
+ulation errors within 4.98%. Furthermore, across
+varying cluster scales in training tasks shown in Fig-
+ure 11(b), Charon demonstrates scalability to extra-
+large configurations with nearly ten thousand GPUs
+and the optimal combination of all kinds of paral-
+lelism (DP, PP, EP, SP, and TP), while keeping sim-
+ulation error under 3.74%. Meanwhile, Charon con-
+sistently maintains the maximum overall error under
+AcrossdifferentGPUsanddifferentscale
+GroundTruthCharon
+H800A100H20L20(a)DifferentGPUModels
+NormalizedTime1
+0 6496480011520(b)DifferentNumberofH800GPUs
+1
+0NormalizedTime+0.71%-2.82%-4.98%-0.37%+0.71%+2.06%-5.35%-3.74%
+SmallScaleLargeScaleTrainingInference
+GroundTruthCharon
+HopperAmpere(a)DifferentGPUModels
+NormalizedTime1
+0 1x1.5x75x180x(b)NormalizedNumberofGPUs
+1
+0NormalizedTime+0.71%-2.82%-4.98%-0.37%+0.71%+2.06%-5.35%-3.74%
+SmallScaleLargeScaleTrainingInferenceHopperAda
+ AnalyticalPredictionAnalyticalPredictionAnalyticalPrediction
+RelativeDifference(%)
+-12.5-10.0-7.5-5.0-2.502.55.0
+-10-8-6-4-2024
+-40-200204060
+MAE1.44%
+MAE6.60%
+MAE1.12%
+MAE5.70%MAE2.22%MAE31.84%
+Linear (N=390)RMS Norm (N=80)FlashAttn-3 (N=80)
+Memory(GB)0
+MaxMemoryAllocatedMaxMemoryReservedTotalMemory20406080
+68.9369.20(+0.39%)
+ActualTrainingCharon
+75.9676.18(+0.29%)78.2178.18(-0.03%)
+(a)GeneratedTracewithCharonSimulator
+(b)ProfiledTracewithvLLM
+Figure 11Comparison results between Ground Truth
+(Profiling) and Charon for different GPU models under
+both small-scale and large-scale clusters.
+5.35% across both small-scale and large-scale clusters.
+The minor prediction error gaps observed across dif-
+ferent hardware and scales are primarily due to the
+inherent runtime variability present in physical execu-
+tion traces. Factors such as network communication
+jitter, dynamic congestion, and data-dependent ker-
+nel execution randomness introduce stochastic behav-
+iors in real-world clusters. Because Charon currently
+does not deterministically model these micro-level
+stochastic variations, minor deviations between the
+simulated and profiled results are expected. However,
+as demonstrated by the consistently low error mar-
+gins, these gaps do not impact the simulator’s ability
+to provide highly reliable performance and scalability
+analyses.
+5 Case Study
+In practice, Charon serves as a versatile platform
+for conducting comprehensive "what-if" analyses to
+guide system-level design decisions. Beyond basic
+configuration tuning, engineers can utilize Charon to
+evaluate the impact of complex compilation and ex-
+ecution strategies without requiring a full compiler
+implementation. For example, operator fusion can be
+simulated by defining localized pattern replacements
+with fused operator models, allowing users to assess
+latency improvements prior to deployment. Similarly,
+memory-efficient operator reordering and overlapping
+strategies can be explored directly on the operation-
+level graph, with the resulting memory footprint and
+scheduling timelines instantly reflected in the sim-
+ulation output. Furthermore, Charon’s pass-based
+architecture naturally supports the evaluation of ad-
+vanced techniques such as activation checkpointing,
+selective offloading, and heterogeneous device place-
+ment.
+To illustrate Charon’s practical utility in navigating
+complex design spaces, we present two detailed case
+11
+
+=== Page 12 ===
+studies. First, we demonstrate how Charon facilitates
+the design of a novel dynamic Sequence Parallelism
+strategy by analyzing the fine-grained tradeoffs be-
+tween computation and communication. Second, we
+showcase Charon’s capability to perform rapid, multi-
+objective optimization for LLM inference, identifying
+optimal deployment configurations that balance sys-
+tem throughput against strict user-facing latency
+constraints.
+5.1 Dynamic Sequence Parallel Strategy
+Sequence parallelism (SP) is commonly used to opti-
+mize prefill latency in LLM serving by distributing
+attention computation across ranks. In this case,
+zigzag attention divides the sequence dimension into
+2xSP chunks, assigning each rank two chunks in a
+zigzag pattern to balance the workload. This strategy
+has been widely adopted in large-scale models such
+as LLaMA-3 [12]. While zigzag attention improves
+compute balance compared to naive partitioning, it
+is not always optimal. For short sequences, zigzag
+attention is less efficient: it over-partitions the input
+and adds disproportionate all-gather communication
+overhead, which outweighs the potential compute sav-
+ings. To address this, we extend zigzag with dynamic
+SP, a fine-grained scheme that assigns different SP
+configurations per request within a batch, ensuring
+the best end-to-end latency.
+We used Charon to analyze the tradeoffs between
+computation distribution and communication over-
+head under varying sequence length distributions.
+Unlike zigzag’s one-size-fits-all pattern, the simulator-
+generated dynamic SP plans assign different SP and
+zigzag configurations to each request within a batch.
+This fine-grained approach allows the system to bal-
+ance compute and communication more precisely:
+for requests with long sequences, dynamic SP main-
+tains zigzag-style balancing across ranks; for requests
+with shorter sequences, it reduces over-partitioning
+to avoid excessive all-gather overhead. As shown in
+Figure 12, dynamic SP adaptively adjusts the par-
+titioning strategy per request, resulting in a more
+balanced utilization of GPU ranks across heteroge-
+neous sequence lengths. By modeling both kernel ex-
+ecution and NCCL communication, Charon predicts
+per-rank latency and generates optimal request-level
+SP strategies that minimize attention latency during
+the prefill stage.
+We evaluated dynamic SP planning on LLaMA-3 70B
+model using 8x Nvidia Ada Lovelace inference GPUs
+and observed an average 15% reduction in attention
+block latency compared to the zigzag baseline. The
+Rank0
+KV
+Q
+Q
+KV
+Rank1
+(a)ZigzagAttention (b)DynamicSP
+①②③④ ①②③④
+①②③
+AG
+①
+②③
+④ ④
+①②③④
+①
+④
+②
+③
+AG Attention OProj
+w/odynamicSP:Req1&2–SP4zigzag
+AG1
+AG2
+Attn1
+Attn2 OProjQKVProj
+Req2
+w/dynamicSP:Req1 – SP4,Req2–SP2zigzag
+AG1
+AG2
+Attn1Attn2OProjQKVProj
+Req1
+Req10 01 12332
+Attn1
+Req20110
+Rank0
+Rank1
+Rank2
+Rank3
+QKVProj
+QKVProj
+AG2
+AG2
+AG1
+AG1
+Attn1
+Attn1
+Attn2
+Attn2 OProj
+QKVProjAG1 Attn1 OProj
+QKVProjAG1 Attn1 OProj
+SavedTime
+OProj
+OProj
+Figure 12Illustration of zigzag attention and dynamic
+SP planning. Each request can adopt a different SP
+configuration: request 1 adopts SP4, and request 2 adopts
+SP2 with zigzag.
+performance gains primarily stemmed from better
+handling of small-sequence requests, where commu-
+nication overhead dominates. Specifically, disabling
+zigzag partitioning for short sequences avoided un-
+necessary all-gather costs, while mixing different SP
+plans across requests further balanced computation
+and communication. Together, these adjustments al-
+lowed the system to adapt SP strategies to workload
+characteristics, delivering consistent improvements
+over static planning. Importantly, we expect these
+gains to be larger on GPUs with higher communica-
+tion latency (e.g., PCIe-based interconnects), where
+reducingcommunicationoverheadbecomesevenmore
+critical.
+5.2 Optimal Inference Performance via
+Simulation
+LLM inference is a complex multi-objective optimiza-
+tion problem. It is governed by key performance met-
+rics such as TTFT and TPOT, which together deter-
+mine user-facing throughput, measured in Tokens Per
+Second per user (TPS/user). On the hardware side,
+system throughput, measured in Tokens Per Second
+per GPU (TPS/GPU), dictates the cost per token.
+These metrics are jointly influenced by numerous im-
+plementation choices, including scheduling algorithms
+and parallelism strategies (e.g., tensor and pipeline
+parallelism sizes, prefill chunk sizes, and batch sizes
+for prefill and decoding). A common deployment
+requirement is to maximize TPS/GPU (thereby min-
+imizing cost) while adhering to user-facing perfor-
+mance constraints, such as specific Service Level Ob-
+jectives (SLOs) for TTFT and TPOT. Deriving an
+optimal configuration analytically is often intractable
+due to the intricate interdependencies among these
+parameters. Consequently, the prevailing approach
+relies on extensive empirical benchmarking across
+12
+
+=== Page 13 ===
+/uni000003ed/uni000003ec/uni000003ee/uni000003ec/uni000003ef/uni000003ec/uni000003f0/uni000003ec/uni000003f1/uni000003ec
+/uni00000064/uni00000057/uni0000005e/uni0000036c/uni00000068/uni00000190/uni0000011e/uni0000018c
+/uni000003ec
+/uni000003ed/uni000003ec/uni000003ec
+/uni000003ee/uni000003ec/uni000003ec
+/uni000003ef/uni000003ec/uni000003ec
+/uni000003f0/uni000003ec/uni000003ec
+/uni000003f1/uni000003ec/uni000003ec
+/uni000003f2/uni000003ec/uni000003ec
+/uni000003f3/uni000003ec/uni000003ec/uni00000064/uni00000057/uni0000005e/uni0000036c/uni00000027/uni00000057/uni00000068
+/uni00000011/uni0000005e/uni000003f0/uni000003f4/uni00000064/uni00000057/uni000003f0/uni00000057/uni00000057/uni000003ed
+/uni00000011/uni0000005e/uni000003f2/uni000003f0/uni00000064/uni00000057/uni000003f4/uni00000057/uni00000057/uni000003ed
+/uni00000011/uni0000005e/uni000003f0/uni000003f4/uni00000064/uni00000057/uni000003f4/uni00000057/uni00000057/uni000003ed
+/uni00000011/uni0000005e/uni000003ef/uni000003ee/uni00000064/uni00000057/uni000003f4/uni00000057/uni00000057/uni000003ed
+/uni00000011/uni0000005e/uni000003ee/uni000003f0/uni00000064/uni00000057/uni000003f4/uni00000057/uni00000057/uni000003ed
+/uni00000011/uni0000005e/uni000003ed/uni000003f2/uni00000064/uni00000057/uni000003f4/uni00000057/uni00000057/uni000003ed
+/uni00000011/uni0000005e/uni000003f2/uni00000064/uni00000057/uni000003f4/uni00000057/uni00000057/uni000003f0
+/uni00000057/uni0000011e/uni0000018c/uni00000128/uni0000017d/uni0000018c/uni00000175/uni00000102/uni00000176/uni00000110/uni0000011e/uni00000003/uni0000017d/uni00000128/uni00000003/uni00000018/uni0000015d/uni00000128/uni00000128/uni0000011e/uni0000018c/uni0000011e/uni00000176/uni0000019a/uni00000003/uni00000012/uni0000017d/uni00000176/uni00000128/uni0000015d/uni00000150/uni000001b5/uni0000018c/uni00000102/uni0000019a/uni0000015d/uni0000017d/uni00000176/uni00000190/uni00000003/uni00000128/uni0000017d/uni0000018c/uni00000003/uni0000003e/uni0000003e/uni00000102/uni00000044/uni00000004/uni000003ef/uni00000372/uni000003f3/uni000003ec/uni00000011
+/uni0000004b/uni00000189/uni0000019a/uni0000015d/uni00000175/uni00000102/uni0000016f
+/uni0000004b/uni0000019a/uni0000015a/uni0000011e/uni0000018c/uni00000190
+Figure 13Simulated performance trade-off between sys-
+tem throughput (TPS/GPU) and user-facing throughput
+(TPS/User)forLlama370BonNVIDIAHopperInference
+GPUs. Each point represents a unique inference configu-
+ration (TP, PP, batch sizes, etc.). The red dots form the
+optimal performance frontier identified by Charon, while
+blue dots represent sub-optimal configurations.
+various inference configurations. This method incurs
+significant time and monetary costs and requires deep
+expertise in how different parameter combinations
+interact—knowledge that most users lack. As a re-
+sult, tuning an inference serving system to its optimal
+performance is a formidable challenge.
+We address this challenge by enabling a comprehen-
+sive exploration of the cost-latency trade-off space at
+a negligible time cost, typically completing its anal-
+ysis within two minutes. This allows for the rapid
+identification of optimal deployment parameters that
+satisfy given TPS/user constraints. As illustrated
+in Figure 13 for a Llama 3 70B model, Charon ex-
+plores a vast space of configuration combinations.
+The optimal points (red) identified by Charon offer a
+significant TPS/GPU improvement over sub-optimal
+configurations (blue) for the same user-facing perfor-
+mance. Furthermore, the plot reveals a clear trade-off
+along the optimal frontier: relaxing user-facing TPS
+constraints can yield up to a 7x increase in system
+throughput (TPS/GPU), thereby reducing costs.
+To achieve its high speed, Charon leverages pre-
+profiled kernel latencies and employs multi-process
+parallel simulation. For ease of use, it is deeply
+integrated with both our in-house inference frame-
+work and the standard Hugging Face Transformers
+library. Charon automatically parses model archi-
+tectures from Hugging Face configurations. From
+our in-house framework, it extracts the PyTorch FX
+graph representation and the corresponding kernel
+implementations used for inference. This design min-
+imizes the effort required to use Charon to nearly
+zero.
+Charon has been successfully validated in our produc-
+tion environment. In highly constrained deployments
+where manual tuning by generalist engineers often
+falls short, Charon rapidly identifies optimal param-
+eter combinations. For instance, when optimizing
+a fixed-output-length model service under a strict
+100ms end-to-end latency SLO, Charon discovered
+a configuration that vastly outperformed the man-
+ually tuned baseline. More importantly, as demon-
+strated by the Pareto frontier analysis in Figure 13,
+Charon empowers engineers to systematically navi-
+gate the tradeoffs between user-facing latency and
+underlying hardware efficiency. By abstracting away
+the complexity of the configuration space, Charon en-
+ables reliable maximum system throughput under
+specified SLOs without requiring extensive domain
+expertise.
+6 Conclusion
+We present Charon, a unified, fine-grained simu-
+lator for large-scale LLM training and inference.
+Charon achieves high fidelity through its compiler-
+style, graph-based architecture, enabling operator-
+level simulation to accurately model complex paral-
+lelism and communication-computation overlap. It
+simplifies workflows by natively ingesting PyTorch
+models and balances simulation cost and precision
+via its hybrid multi-engine backend. Our experiments
+demonstrate Charon achieves an overall simulation
+error of less than 5.35%, and under 3.74% for a large-
+scale training. As a fast and accurate “all-in-one”
+platform, Charon significantly lowers the cost and
+expertise required to find optimal configurations for
+large-scale LLM training and serving deployment.
+7 Acknowledgments
+We sincerely thank our teammates and colleagues for
+their continuous support and helpful suggestions dur-
+ing the development of Charon. Building this system
+required extensive teamwork, and we are deeply grate-
+ful to everyone who provided feedback along the way.
+We express our special thanks to Yan Xu, Chengji
+Yao, Xiang Li, Fan Yin, Dai Teng, Xiao Yu, and
+Xin Liu for their valuable ideas, project discussions,
+and code contributions. The successful completion of
+Charon would not have been possible without their
+tremendous support and collaboration.
+13
+
+=== Page 14 ===
+References
+[1] Amey Agrawal, Nitin Kedia, Jayashree Mohan,
+Ashish Panwar, Nipun Kwatra, Bhargav Gula-
+vani, Ramachandran Ramjee, and Alexey Tumanov.
+Vidur: A large-scale simulation framework for llm in-
+ference, 2024. URL https://arxiv.org/abs/2405.
+05465.
+[2] Jaehong Cho, Minsu Kim, Hyunmin Choi, Guseul
+Heo, and Jongse Park. Llmservingsim: A hw/sw
+co-simulation infrastructure for llm inference serving
+at scale. In2024 IEEE International Symposium on
+Workload Characterization (IISWC), pages 15–29,
+2024. doi: 10.1109/IISWC63097.2024.00012.
+[3] William Fedus, Barret Zoph, and Noam Shazeer.
+Switch transformers: Scaling to trillion parameter
+models with simple and efficient sparsity, 2022. URL
+https://arxiv.org/abs/2101.03961.
+[4] Yicheng Feng, Yuetao Chen, Kaiwen Chen, Jingzong
+Li, Tianyuan Wu, Peng Cheng, Chuan Wu, Wei
+Wang, Tsung-Yi Ho, and Hong Xu. Echo: Simulating
+distributed training at scale, 2024. URL https:
+//arxiv.org/abs/2412.12487.
+[5] Fei Gui, Kaihui Gao, Li Chen, Dan Li, Vincent Liu,
+Ran Zhang, Hongbing Yang, and Dian Xiong. Ac-
+celerating design space exploration for llm training
+systems with multi-experiment parallel simulation.
+In Proceedings of the 22nd USENIX Symposium
+on NetworkedSystems Design and Implementation,
+NSDI ’25, USA, 2025. USENIX Association. ISBN
+978-1-939133-46-5.
+[6] Hanpeng Hu. dpro, 2022. URLhttps://figshare.
+com/articles/software/dpro/19165622.
+[7] Sumit Kumar, Arjun Temura, Naman Sharma, Ra-
+manjeet Singh, Meet Dadhania, Praveen Tammana,
+Satananda Burla, Abed Mohammad Kamaluddin,
+and Rinku Shah. Simulating llm training work-
+loads for heterogeneous compute and network in-
+frastructure, 2025. URL https://arxiv.org/abs/
+2508.05370.
+[8] Woosuk Kwon, Zhuohan Li, Siyuan Zhuang, Ying
+Sheng, Lianmin Zheng, Cody Hao Yu, Joseph E.
+Gonzalez, Hao Zhang, and Ion Stoica. Efficient mem-
+ory management for large language model serving
+with pagedattention, 2023. URL https://arxiv.
+org/abs/2309.06180.
+[9] Shenggui Li, Fuzhao Xue, Chaitanya Baranwal,
+Yongbin Li, and Yang You. Sequence parallelism:
+Long sequence training from system perspective,
+2022. URLhttps://arxiv.org/abs/2105.13120.
+[10] Mingyu Liang, Hiwot Tadese Kassa, Wenyin Fu,
+Brian Coutinho, Louis Feng, and Christina Delim-
+itrou. Lumos: Efficient performance modeling and
+estimation for large-scale llm training, 2025. URL
+https://arxiv.org/abs/2504.09307.
+[11] Qianli Ma, Yaowei Zheng, Zhelun Shi, Zhongkai
+Zhao, Bin Jia, Ziyue Huang, Zhiqi Lin, Youjie Li,
+Jiacheng Yang, Yanghua Peng, Zhi Zhang, and Xin
+Liu. Veomni: Scaling any modality model training
+with model-centric distributed recipe zoo, 2025. URL
+https://arxiv.org/abs/2508.02317.
+[12] meta llama. meta-llama/llama-3.1-405b hugging face,
+2024. URL https://huggingface.co/meta-llama/
+Llama-3.1-405B. Accessed on Oct 17, 2025.
+[13] Deepak Narayanan, Mohammad Shoeybi, Jared
+Casper, Patrick LeGresley, Mostofa Patwary, Vi-
+jay Anand Korthikanti, Dmitri Vainbrand, Prethvi
+Kashinkunti, Julie Bernauer, Bryan Catanzaro,
+Amar Phanishayee, and Matei Zaharia. Efficient
+large-scale language model training on gpu clusters
+using megatron-lm, 2021. URLhttps://arxiv.org/
+abs/2104.04473.
+[14] Samyam Rajbhandari, Jeff Rasley, Olatunji Ruwase,
+and Yuxiong He. Zero: Memory optimizations to-
+ward training trillion parameter models, 2020. URL
+https://arxiv.org/abs/1910.02054.
+[15] Saeed Rashidi, Srinivas Sridharan, Sudarshan Srini-
+vasan, and Tushar Krishna. Astra-sim: Enabling
+sw/hw co-design exploration for distributed dl
+training platforms. In 2020 IEEE International
+Symposium on Performance Analysis of Systems
+and Software (ISPASS), pages 81–92, 2020. doi:
+10.1109/ISPASS48437.2020.00018.
+[16] Mohammad Shoeybi, Mostofa Patwary, Raul Puri,
+Patrick LeGresley, Jared Casper, and Bryan Catan-
+zaro. Megatron-lm: Training multi-billion parameter
+language models using model parallelism, 2020. URL
+https://arxiv.org/abs/1909.08053.
+[17] Shaden Smith, Mostofa Patwary, Brandon Norick,
+Patrick LeGresley, Samyam Rajbhandari, Jared
+Casper, Zhun Liu, Shrimai Prabhumoye, George
+Zerveas, Vijay Korthikanti, Elton Zhang, Rewon
+Child, Reza Yazdani Aminabadi, Julie Bernauer, Xia
+Song, Mohammad Shoeybi, Yuxiong He, Michael
+Houston, Saurabh Tiwary, and Bryan Catanzaro.
+Using deepspeed and megatron to train megatron-
+turing nlg 530b, a large-scale generative language
+model, 2022. URL https://arxiv.org/abs/2201.
+11990.
+[18] Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob
+Uszkoreit, Llion Jones, Aidan N. Gomez, Lukasz
+Kaiser, and Illia Polosukhin. Attention is all you
+need, 2023. URL https://arxiv.org/abs/1706.
+03762.
+[19] Xizheng Wang, Qingxu Li, Yichi Xu, Gang Lu, Dan
+Li, Li Chen, Heyang Zhou, Linkang Zheng, Sen
+14
+
+=== Page 15 ===
+Zhang, Yikai Zhu, Yang Liu, Pengcheng Zhang, Kun
+Qian, Kunling He, Jiaqi Gao, Ennan Zhai, Den-
+nis Cai, and Binzhang Fu. SimAI: Unifying archi-
+tecture design and performance tuning for Large-
+Scale large language model training with scalabil-
+ity and precision. In 22nd USENIX Symposium
+on Networked Systems Design and Implementation
+(NSDI 25), pages 541–558, Philadelphia, PA, April
+2025. USENIX Association. ISBN 978-1-939133-
+46-5. URL https://www.usenix.org/conference/
+nsdi25/presentation/wang-xizheng-simai.
+[20] Samuel Williams, Andrew Waterman, and David
+Patterson. Roofline: an insightful visual performance
+model for multicore architectures.Commun. ACM,
+52(4):65–76, April 2009. ISSN 0001-0782. doi: 10.
+1145/1498765.1498785. URL https://doi.org/10.
+1145/1498765.1498785.
+[21] William Won, Taekyung Heo, Saeed Rashidi, Srini-
+vas Sridharan, Sudarshan Srinivasan, and Tushar Kr-
+ishna. Astra-sim2.0: Modeling hierarchical networks
+and disaggregated systems for large-model training
+at scale. In 2023 IEEE International Symposium
+on Performance Analysis of Systems and Software
+(ISPASS), page 283–294. IEEE, April 2023. doi:
+10.1109/ispass57527.2023.00035. URL http://dx.
+doi.org/10.1109/ISPASS57527.2023.00035.
+[22] Yanli Zhao, Andrew Gu, Rohan Varma, Liang Luo,
+Chien-Chin Huang, Min Xu, Less Wright, Hamid
+Shojanazeri, Myle Ott, Sam Shleifer, Alban Des-
+maison, Can Balioglu, Pritam Damania, Bernard
+Nguyen, Geeta Chauhan, Yuchen Hao, Ajit Math-
+ews, and Shen Li. Pytorch fsdp: Experiences on
+scaling fully sharded data parallel, 2023. URL
+https://arxiv.org/abs/2304.11277.
+15

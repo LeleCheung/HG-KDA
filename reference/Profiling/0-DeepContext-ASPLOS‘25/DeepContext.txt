@@ -1,0 +1,1100 @@
+DeepContext: A Context-aware, Cross-platform, and
+Cross-framework Tool for Performance Profiling and
+       Analysis of Deep Learning Workloads
+                 Qidong Zhao∗                                         Hao Wu∗                                    Yueming Hao†
+       North Carolina State University                       George Mason University                                  Meta
+         Raleigh, NC, United State                           Fairfax, VA, United State                         Menlo Park, CA, USA
+            qzhao24@ncsu.edu                                     hwu27@gmu.edu                                  yhao@meta.com
+
+                 Zilingfeng Ye                                         Jiajia Li                                       Xu Liu
+                   Independent                           North Carolina State University                 North Carolina State University
+                  Beijing, China                           Raleigh, NC, United State                       Raleigh, NC, United State
+                yipzlf@gmail.com                               jiajia.li@ncsu.edu                              xliu88@ncsu.edu
+
+                                                                    Keren Zhou
+                                                             George Mason University
+                                                             Fairfax, VA, United State
+                                                                kzhou6@gmu.edu
+
+Abstract                                                                          CCS Concepts: • General and reference → Performance;
+Effective performance optimization of deep learning mod-                          Measurement; • Software and its engineering → Dy-
+els requires comprehensive profiling across heterogeneous                         namic analysis.
+computing environments, yet existing tools fail to bridge                         Keywords: Profiling Tool; Deep Learning; Performance Tun-
+the semantic gap between high-level operations and low-                           ing; Heterogeneous Computing; Context-aware Profiling;
+level execution. This paper presents DeepContext, a novel                         Automated Analysis; Cross-framework Profiling
+profiling system that correlates program contexts across
+Python code, deep learning frameworks, C/C++ libraries,                           ACM Reference Format:
+and GPU execution. DeepContext features a framework-                              Qidong Zhao, Hao Wu, Yueming Hao, Zilingfeng Ye, Jiajia Li, Xu
+                                                                                  Liu, and Keren Zhou. 2025. DeepContext: A Context-aware, Cross-
+agnostic shim layer that seamlessly correlates the behavior
+                                                                                  platform, and Cross-framework Tool for Performance Profiling and
+of the deep learning framework with hardware performance
+                                                                                  Analysis of Deep Learning Workloads. In Proceedings of the 30th
+metrics. Furthermore, DeepContext provides an automated                           ACM International Conference on Architectural Support for Program-
+performance analyzer that offers actionable optimization                          ming Languages and Operating Systems, Volume 3 (ASPLOS ’25),
+guidance based on its holistic view of the entire software                        March 30-April 3, 2025, Rotterdam, Netherlands. ACM, New York,
+stack of deep learning applications. DeepContext works for                        NY, USA, 16 pages. https://doi.org/10.1145/3676642.3736127
+mainstream deep learning frameworks and runs on modern
+CPU+GPU architectures with low overhead. Our evaluation                           1    Introduction
+demonstrates that DeepContext uncovers previously hid-
+                                                                                  The rapid advancement of deep learning has led to increas-
+den performance bottlenecks in real-world deep-learning
+                                                                                  ingly complex models [3, 19, 46] deployed across diverse and
+applications. Guided by DeepContext, we are able to fix
+                                                                                  heterogeneous computing environments. Optimizing the
+multiple performance issues, achieving speed-ups between
+                                                                                  training and inference of these models is critical for improv-
+1.06× and 1.66×.
+                                                                                  ing performance and reducing computational costs [27, 33].
+∗ Both authors contributed equally to this research.
+† The author’s contribution to this project was carried out while he was a
+                                                                                  However, the sophisticated interactions between CPUs and
+                                                                                  GPUs, coupled with the diversity of frameworks [11, 45]
+Ph.D. student at North Carolina State University.
+                                                                                  and compilation modes [6], pose significant challenges for
+                                                                                  developers seeking to identify and address performance bot-
+                                                                                  tlenecks effectively.
+This work is licensed under a Creative Commons Attribution 4.0 Interna-              Profiling tools play a critical role in identifying perfor-
+tional License.
+ASPLOS ’25, Rotterdam, Netherlands
+                                                                                  mance issues in deep learning workloads. These tools in-
+© 2025 Copyright held by the owner/author(s).
+                                                                                  clude framework-specific solutions, such as the PyTorch
+ACM ISBN 979-8-4007-1080-3/2025/03                                                profiler [47] and the JAX profiler [32], as well as those pro-
+https://doi.org/10.1145/3676642.3736127                                           vided by vendors, such as Nsight Systems [41], rocprof [5],
+
+
+
+                                                                             48
+ASPLOS ’25, March 30-April 3, 2025, Rotterdam, Netherlands                                                          Qidong Zhao et al.
+
+
+                                                                       framework and device context but still miss the full stack
+                                                                       view.
+                                                                          These limitations significantly hinder thorough perfor-
+                                                                       mance analysis. For example, Figure 1 illustrates a key short-
+                                                                       coming. In Figure 1a, only the C++ code is visible in the call
+                                                                       path, obscuring where convolution operations originate, es-
+                                                                       pecially problematic since frameworks like PyTorch launch
+           (a) The hot call path w/o framework context                 backward and forward operators from different CPU threads.
+                                                                       This limitation makes it challenging to pinpoint performance
+                                                                       bottlenecks in complex models that may invoke hundreds of
+                                                                       convolution operations [26]. In contrast, Figure 1b reveals
+                                                                       both the Python call path and the associated deep learning
+                                                                       operators, providing deeper insights for optimization.
+                                                                          Additionally, most existing tools [5, 32, 35, 47] trace and
+                                                                       record every operation, generating enormous profiles for
+                                                                       long-running training workloads. This not only consumes
+                                                                       excessive memory resources, but also makes bottleneck iden-
+                                                                       tification tedious and manual. While some tools can aggre-
+                                                                       gate metrics postmortem for individual kernels, they cannot
+                                                                       streamline metrics aggregation online to reduce profile size
+                                                                       or differentiate between instances called from different con-
+                                                                       texts for automated problem identification.
+           (b) The hot call path w/ framework context                     The incompatibility across platforms and frameworks fur-
+                                                                       ther complicates analysis. Vendor tools such as Nvidia’s
+Figure 1. Comparison of highlighted call paths w/o and w               Nsight suite work with multiple frameworks on Nvidia GPUs,
+framework contexts in two framegraphs [23].                            but are incompatible with AMD GPUs. Similarly, framework-
+                                                                       specific tools such as the PyTorch profiler support both AMD
+                                                                       and Nvidia GPUs, but cannot handle JAX workloads. This
+                                                                       siloed approach increases the learning curve and limits cross-
+and VTune [29]. The primary functionality of these tools is            referencing across frameworks and hardware, making it dif-
+tracing, which captures metrics associated with individual             ficult for users to determine optimal configurations for their
+CPU and GPU operations and displays them on a compre-                  specific workloads.
+hensive timeline to assist users in investigating performance             To address these challenges, we introduce DeepContext,
+bottlenecks.                                                           a novel profiler that delivers comprehensive performance
+   The landscape of profiling tools presents significant chal-         insights for deep learning workloads. As shown in Table 1,
+lenges for comprehensive performance analysis and opti-                DeepContext captures all critical program context infor-
+mization of deep learning workloads. Table 1 summarizes                mation across the entire software and hardware stack, en-
+the features and limitations across five categories of exist-          abling the identification of performance issues from high-
+ing tools: system, hardware, framework, Python, and deep               level Python code down to the device code on GPUs. It pro-
+learning profilers.                                                    vides cross-GPU profiling capabilities and maintains visibil-
+   System profilers such as Linux perf and eBPF provide                ity across multiple frameworks—supporting both PyTorch
+strong CPU profiling capabilities and cross-framework sup-             and JAX on AMD and Nvidia GPUs, as well as x86 and ARM
+port, but lack Python and framework context that is critical           CPUs. By effectively collecting, attributing, and aggregating
+for deep learning workloads. Hardware profilers (i.e., profil-         performance metrics, DeepContext facilitates an in-depth
+ers provided by hardware vendors) such as Nsight Systems,              analysis of performance bottlenecks and reveals optimiza-
+rocprof, and Intel VTune offer hardware-specific insights              tion opportunities at the architectural and system levels that
+but have varying limitations: Nsight Systems lack frame-               conventional profiling tools typically miss.
+work context; rocprof is particularly limited in its contextual           This paper presents the design, implementation, and eval-
+awareness; and all have constraints in cross-device profiling.         uation of DeepContext and makes the following contribu-
+Framework profilers like JAX and PyTorch profilers pro-                tions:
+vide good Python integration and some device context, but
+are framework-specific. Dedicated Python profilers such as
+Scalene offer Python visibility, but lack framework-specific
+insights. Existing deep learning profilers such as XSP provide
+
+
+
+                                                                  49
+DeepContext: A Context-aware, Cross-platform, and Cross-framework Profiling Tool         ASPLOS ’25, March 30-April 3, 2025, Rotterdam, Netherlands
+
+
+           Table 1. Comparison of DeepContext with existing profiling tools. (✓ = supported; ×= not supported.)
+
+                     Profiling Tools                   Python     Framework         C++      Device     Cross       Cross          CPU
+           Category                Name                Context      Context        Context   Context    GPUs     Frameworks      Profiling
+       System Profilers
+                               Linux perf [36]            ×            ×             ✓          ×         ×           ✓              ✓
+                                eBPF [30, 31]             ×            ×             ✓          ×         ×           ✓              ✓
+
+          Hardware
+                             Nsight Systems [41]          ✓            ×             ✓          ×         ×           ✓              ✓
+          Profilers
+                                 rocprof [4]              ×            ×             ×          ×         ×           ×              ×
+                              Intel VTune [29]            ×            ×             ✓          ×         ×           ✓              ✓
+         Framework            JAX profiler [32]           ✓            ×             ×          ×         ✓            ×             ✓
+          Profilers         PyTorch profiler [47]         ✓            ✓             ×          ×         ✓            ×             ✓
+       Python Profilers           Scalene [8]             ✓            ×             ×          ×         ×           ✓              ✓
+        Deep Learning           XSP [35]                  ×            ✓             ×          ✓         ×           ✓              ×
+          Profilers        DeepContext (our tool)         ✓            ✓             ✓          ✓         ✓           ✓              ✓
+
+
+• We introduce a “shim” layer—DLMonitor—that converts                       However, these tools often focus on specific frameworks or
+  deep learning framework-specific data into a framework-                   platforms with limited applicability.
+  agnostic format, enabling seamless integration of frame-                     Some workload-specific profilers, such as RL-Scope [22]
+  work information with third-party performance tools.                      and XSP [35], analyze interactions across layers of the deep
+• We design an automated performance analyzer that pro-                     learning stack to identify bottlenecks that are not obvious
+  vides actionable optimization suggestions based on per-                   when examining individual layers. DeepContext advances
+  formance metrics and program contexts. Such optimiza-                     these tools by employing a generic solution for different
+  tion suggestions include fusing operators, changing data                  frameworks, GPUs, and platforms.
+  layouts, modifying hardware configurations, and many                         There are profilers that post-process metrics from existing
+  others.                                                                   profiling tools. For instance, Hotline Profiler [50] introduces
+• We adopt a series of optimizations to reduce the runtime                  a multi-scale timeline with annotations for DNN training,
+  overhead and memory and storage requirements of Deep                      based on the postmortem analysis of results from the Py-
+  Context to enable it running on real deep learning ap-                    Torch profiler [47]. Similarly, DLProf [13] analyzes the re-
+  plications, which typically have complex code hierarchies                 sults collected from Nsight Systems. Since these tools do not
+  and long execution time.                                                  modify the runtime, they suffer from the same limitations as
+                                                                            trace-based profilers, which incur significant memory and
+   We evaluated DeepContext using a diverse range of
+                                                                            disk overhead.
+deep learning workloads across various platforms and frame-
+                                                                               Skyline [56], as the most related tool to our tool, offers an
+works, demonstrating that DeepContext significantly saves
+                                                                            interactive profiling experience by integrating the profiler
+memory and disk space usage with similar runtime over-
+                                                                            into the development environment. However, unlike Deep
+head compared to the state-of-the-art performance tools.
+                                                                            Context that intercepts “native” C/C++ operations, Skyline
+Through case studies, we show that DeepContext can ef-
+                                                                            uses monkey patching [9] for PyTorch Python operations,
+fectively identify performance issues and suggest insightful
+                                                                            which introduces overhead and prevents it from obtaining
+code changes, enabling straightforward optimization of deep
+                                                                            native call path information. Additionally, it does not interact
+learning models. Even users with limited experience in deep
+                                                                            with vendor-provided profiling substrates, limiting its ability
+learning frameworks or CPU and GPU architectures can
+                                                                            to gather abundant low-level information using performance
+achieve speedups ranging from 1.06× to 1.66×.
+                                                                            counters.
+
+2    Related Work                                                              Call Path Profilers. General performance tools such as
+In this section, we review existing approaches about deep                   HPCToolkit [59], TAU [49], perf [36], and DrCCTProf [58] of-
+learning profilers, call path profiling, and automated perfor-              fer call path profiling and performance analysis for low-level
+mance analysis.                                                             languages such as Fortran and C/C++. These tools provide
+                                                                            deep insights into the complex behaviors of the underlying
+  Deep Learning Profilers. Many profilers can measure                       software stack and operating system, offering a complemen-
+deep learning workloads. These tools include vendor-                        tary perspective to what deep learning profilers may miss.
+provided tools such as Nsight Systems [41], VTune [29],                     Additionally, some of these tools can sample a large set of
+rocprof [4] and DLProf [13], as well as framework-based tools               CPU performance counters, going beyond coarse-grained
+such as the JAX profiler [32] and the PyTorch profiler [47].                metrics. However, these tools often lack integration with
+
+
+
+                                                                       50
+ASPLOS ’25, March 30-April 3, 2025, Rotterdam, Netherlands                                                                Qidong Zhao et al.
+
+
+Python runtime and deep learning frameworks, limiting their                                           GUI
+effectiveness in profiling multi-language environments.                                                     analyses
+   On the other hand, Python-specific profiling tools like
+Scalene [8] and cProfile [21] provide effective analysis of                                 Performance Analyzer
+Python call paths but lack the ability to analyze call paths                                                database
+in lower-level languages. Moreover, they can only collect
+limited information about accelerators. DeepContext ad-                                             Profiler
+dresses these shortcomings by providing a comprehensive
+                                                                                          context               metrics
+call context that spans every level of the software stack, ef-
+fectively bridging the gap between native language profiling
+and high-level language analysis.                                                                   callbacks
+                                                                                                                 CUPTI / RocTracer
+                                                                                   DLMonitor
+                                                                                                                  PAPI / Perf Event
+   Automated Performance Analysis. Existing automated
+performance analysis tools often target specific or limited do-
+mains. For instance, tools such as NCU [14] and GPA [61] fo-
+cus on pattern matching of GPU kernels using expert-defined
+rules based on fine-grained metrics. These tools provide in-                 Figure 2. Major components of DeepContext.
+sights into how and where to modify kernel source code
+to improve performance. On the other hand, tools such as
+                                                                       through the CUPTI [40] and RocTracer [5] APIs, and from
+Nsight Systems [41] and DLProf [13] analyze trace patterns
+                                                                       CPUs through Linux system calls, Perf events [36], and the
+to provide coarse-grained recommendations. They offer in-
+                                                                       PAPI API [55]. Once the program context is obtained from
+sights into which GPU operations are expensive and whether
+                                                                       DLMonitor, the profiler associates the metrics collected
+the CPU is causing performance bottlenecks. However, these
+                                                                       with the program context and aggregates the metrics within
+tools do not consider both low- and high-level contexts simul-
+                                                                       the same context when necessary. DLMonitor serves as
+taneously. In contrast, DeepContext introduces a pattern
+                                                                       a “shim” layer between the profiler and the deep learning
+matching system that allows flexible rules to be defined for
+                                                                       framework. It allows the profiler to intercept framework op-
+analysis, incorporating low- and high-level contexts based
+                                                                       erations during the execution of deep learning frameworks
+on fine- and coarse-grained metrics. This approach provides
+                                                                       and provides a comprehensive context when the profiler
+a more holistic view of performance issues, enabling more
+                                                                       calls DLMonitor. Next, the performance analyzer processes
+flexible analysis and effective optimizations.
+                                                                       the collected data postmortem, identifying performance bot-
+                                                                       tlenecks and optimization opportunities. Finally, the GUI
+3    Overview                                                          presents the analyzed data in an intuitive format, compatible
+DeepContext is designed to achieve multiple objectives,                with Visual Studio Code [37], to facilitate interpretation and
+including providing a holistic view that spans high- and               inspection of performance issues.
+low-level contexts, enabling cross-framework profiling, and
+supporting fast or even automated performance analysis.                4   Design and Implementation
+Each of these objectives presents unique challenges: (1) High-
+                                                                       This section is organized into five subsections: four dedicated
+and low-level contexts are obtained through different meth-
+                                                                       to the aforementioned modules of DeepContext, and a fifth
+ods, as Python is interpreted while C++ is compiled, and
+                                                                       that discusses how DeepContext’s modular design facili-
+framework-specific information cannot be obtained simply
+                                                                       tates updates as profiling APIs evolve, while also explaining
+by examining either C/C++ or Python code alone. (2) Differ-
+                                                                       its support for diverse GPU generations and features.
+ent frameworks are implemented in vastly different ways,
+making direct instrumentation of their source code to cap-
+                                                                       4.1 DLMonitor
+ture information both unstable and unmaintainable. (3) For
+complex deep learning workloads, the profiling database will           DLMonitor is a key component of DeepContext, provid-
+include extensive program context, numerous GPU kernel                 ing a unified interface for obtaining call paths and registering
+invocations, and various metrics, making it challenging to             callbacks within deep learning frameworks. Profilers interact
+manually identify performance issues.                                  with deep learning frameworks by invoking DLMonitor’s
+   To address these challenges, DeepContext is structured              APIs. The core APIs include:
+into four primary components, as shown in Figure 2, each               • dlmonitor_init: Initializes DLMonitor’s shared library,
+designed to handle distinct aspects of performance profiling             libdlmonitor.so, which is typically loaded at the start
+for deep learning workloads. The profiler is responsible for             of execution using utilities like LD_PRELOAD.
+collecting, attributing, and aggregating performance metrics.          • dlmonitor_callback_register: Registers the callback
+It gathers performance metrics from Nvidia and AMD GPUs                  specified by profilers to intercept operations in a specific
+
+
+
+                                                                  51
+DeepContext: A Context-aware, Cross-platform, and Cross-framework Profiling Tool               ASPLOS ’25, March 30-April 3, 2025, Rotterdam, Netherlands
+
+
+                           Root                          Root                        tensor memory allocation/deallocation. At these points,
+                                                                                     profilers can access information such as operators in-
+                                                  Python
+                                                                                     puts and outputs, and retrieve the full call path via the
+                                                                                     dlmonitor_callpath_get function.
+                                              DL Operator
+                                                                                        DLMonitor employs different mechanisms to support
+                                                  dlmonitor_callback_register
+                                         C/C++
+                                                                                     PyTorch and JAX, ensuring compatibility with frameworks
+                                                                                     installed via pip wheels without source code modifications. For
+                 C/C++                GPU API                                        PyTorch, it leverages PyTorch’s aten::addGlobalCallback
+                                                                                     interface, which allows for invoking customizable call-
+       GPU API                    GPU Kernel Function                                backs at various points. Unlike PyTorch, implementing
+       (a) w/o DLMonitor              (b) w/ DLMonitor
+                                                                                     DLMonitor for JAX presents two challenges. First, JAX does
+                                                                                     not inherently support registering callbacks before and after
+Figure 3. Comparison between call paths w/ and w/o                                   each deep learning operator. Second, while PyTorch’s eager
+DLMonitor.                                                                           mode is widely used, where each operator is executed indi-
+                                                                                     vidually, JAX compiles operators into computation graphs
+                                                                                     with fused operations before execution. Once compiled, the
+  domain, such as deep learning frameworks and GPU run-                              runtime call path of each operator differs from its call path
+  time.                                                                              in the original code where it was compiled from. To address
+• dlmonitor_finalize: Disables DLMonitor monitoring                                  these challenges, we implemented a lightweight binary in-
+  and releases all interceptions.                                                    strumentation utility that allows JAX to provide profiling
+• dlmonitor_callpath_get: Constructs and returns a                                   information comparable to that of PyTorch. Specifically, to
+  multi-layer call path to the profiler.                                             address the first challenge, we utilize binary instrumentation
+   In Figure 3, we illustrate how DeepContext provides                               to intercept JAX’s compilation function for passes of compu-
+multi-layer insights that differentiate it from comparable                           tation graphs and insert callbacks before and after each JAX
+tools like Nvidia Nsight and perf/eBPF. Figure 3 (a) shows the                       operator after the very last pass. For the second challenge,
+limited call path visibility provided by traditional profilers,                      we record the mappings between fused operators to original
+which only capture C/C++ frames (native call path) without                           ones (Figure 4) in the operator fusion pass. The call path of
+contextual information about Python code, deep learning                              each original operator is recorded during the compilation
+framework operations, or GPU kernel execution details. In                            phase, while the call path of the fused operator is recorded
+contrast, Figure 3 (b) demonstrates DeepContext’s compre-                            at runtime. In the GUI, we display all possible original call
+hensive call path construction through DLMonitor, which                              paths associated with the runtime call path of each fused
+seamlessly integrates frames from all critical layers: high-                         operator.
+level Python code, framework operators, native C/C++ func-
+                                                                                                           Just-in-time compilation
+tions, GPU kernel invocations, and even execution metrics
+within GPU kernels. This multi-layer visibility enables Deep
+Context to establish precise correlations between high-level
+operations and low-level performance bottlenecks while sup-
+porting runtime metric aggregation across the entire soft-                                                            Actual                       Runtime
+                                                                                                                      call                         call
+ware stack. By maintaining these cross-layer relationships,                                                           paths                        paths
+DeepContext can attribute performance issues to specific
+                                                                                        1     2      3       4                        1&3    2&4
+framework operators or Python functions—a capability that
+remains beyond the reach of hardware-focused tools like
+Nvidia Nsight or system-level profilers like perf/eBPF. In the
+following, we describe implementation details about how                                              Captured during the compilation phase
+
+DLMonitor intercepts operations and constructs call paths.
+                                                                                     Figure 4. DLMonitor intercepts JAX’s compilation phase
+   Intercepting Framework Operations. DLMonitor                                      to map fused operators to original ones.
+intercepts operations in PyTorch and JAX, al-
+lowing profilers to register callbacks using the
+dlmonitor_callback_register function before and                                         Intercepting GPU APIs. In addition to intercepting
+after each operation. Here, the domain provided to the func-                         framework operations, DLMonitor can intercept GPU
+tion is DLMONITOR_FRAMEWORK. Interception points include                             APIs, such as kernel launches, memory copies, and
+individual deep learning operators (e.g., torch.matmul),                             memory allocation/free operations. To enable it, pro-
+the start and end of compute graph compilation, and                                  filers indicate the domain as DLMONITOR_GPU to the
+
+
+
+                                                                                52
+ASPLOS ’25, March 30-April 3, 2025, Rotterdam, Netherlands                                                             Qidong Zhao et al.
+
+
+dlmonitor_callback_register function. Profilers that                     all backward operators associated with a forward operator
+register callbacks for GPU APIs can capture not only ar-                 share the same sequence ID. Using the sequence ID, the back-
+guments and results about lower-level APIs, but can ob-                  ward thread looks up the forward CPU thread, fetches the
+tain frames between the low-level APIs and framework op-                 Python and framework call path of the corresponding for-
+erations. DLMonitor registers callbacks using CUPTI for                  ward operator, and integrates it with the native call path of
+Nvidia GPUs and RocTracer for AMD GPUs. To extend                        the backward operator obtained from the backward thread
+DLMonitor for hardware that does not have a vendor-                      itself.
+provided callback mechanism, users can define the function                  Call path caching. Unwinding call paths from multiple
+signature of the driver function and its in a configuration file.        sources is expensive, particularly when GPU APIs are fre-
+DLMonitor will register custom callbacks using LD_AUDIT                  quently invoked in deep learning workloads. To mitigate
+for all functions recorded in the configuration file.                    this overhead, we leverage the observation that multiple
+                                                                         GPU kernels launched within the same deep learning opera-
+   Call Path Integration. One key innovation of
+                                                                         tor typically share identical Python and operator call paths.
+DLMonitor is its ability to assemble a unified call path
+                                                                         Based on this insight, we implement a caching mechanism
+that spans from high-level Python code to low-level
+                                                                         that stores both the Python call path and the deep learn-
+GPU kernel execution. At each interception point, if
+                                                                         ing operator information in a thread-local variable upon the
+dlmonitor_callpath_get is called, DLMonitor retrieves
+                                                                         operator’s first invocation.
+call paths from multiple sources. The Python call path
+                                                                            To accommodate varying performance requirements, we
+is obtained using CPython’s PyFrame-related APIs. The
+                                                                         support two operational modes with different overhead:
+“native” call path, which includes C/C++ function symbols,
+is captured using libunwind [38]. The framework call path                   1. Lightweight Mode: This mode produces a simplified
+is maintained via a shadow stack in each CPU thread.                           call path that includes Python context while avoiding
+DLMonitor updates the stack for operators as they are                          expensive native unwinding. Since native call path
+entered and exited, along with their corresponding memory                      collection is disabled in this mode, we concatenate the
+locations. dlmonitor_callpath_get also allows users to                         shadow call path, GPU API, and GPU kernel function
+choose which specific call path source to integrate or ignore                  with the cached Python call path from the thread-local
+to reduce overhead.                                                            variable, bypassing the costly native stack unwinding
+   Next, DLMonitor integrates these three call paths into a                    process entirely.
+single comprehensive call path. It traverses the native call                2. Comprehensive Mode: This mode generates a com-
+path in a bottom-up direction, matching the address of each                    plete cross-language call path that captures both
+frame with the recorded addresses of deep learning operators.                  Python and C++ execution contexts. We utilize libun-
+If a match is found, DLMonitor inserts the operator name                       wind’s unw_step to retrieve native frames incremen-
+under the caller frame. If a frame’s address falls within the                  tally, constructing the native call path in a bottom-up
+libpython.so address space (recorded using LD_AUDIT), all                      fashion until we reach the cached deep learning oper-
+frames above it are replaced with the Python call path. If                     ator. We then combine this native segment with the
+we are at a GPU kernel launch callback, we read parse the                      previously cached Python call path to form a compre-
+function object (e.g., CUfunction) to obtain the kernel name                   hensive execution trace.
+and insert it to the bottom of the call path.
+                                                                         4.2 Profiler
+   Optimizations. We have implemented optimizations                      In this section, we describe how DeepContext’s profiler col-
+to provide more insights and reduce the overhead of                      lects GPU and CPU metrics and attributes them to a calling
+DLMonitor.                                                               context tree as shown in Figure 5.
+   Forward and backward operator association. In PyTorch,
+when training is enabled, the backward method initiates                     Calling Context Tree. The calling context tree is con-
+backward propagation from the leaf operators to the root                 structed by inserting call paths obtained from DLMonitor
+of the computation graph. New CPU threads, called back-                  and collapsing frames that refer to the same locations. For
+ward threads, are created for each GPU device to handle this             C/C++, GPU API, and GPU kernel frames, two frames are
+process. As a result, the native call path of an operator ob-            considered the same if they share the same library path and
+tained from a backward thread loses the original context                 program counter (PC). For Python frames, they are compared
+of the forward operator, with no Python source code avail-               by file path and line number, while framework-based frames
+able. This issue is particularly problematic for GPU kernels             are checked by operator names. Each node in the calling con-
+without meaningful names, such as the elementwise ker-                   text tree maintains a list of metrics, which are aggregated by
+nel in PyTorch, as it becomes difficult to trace which source            sum, minimum, average, and standard deviation for metrics
+code triggered these calls. To address this, we record each              of the same type. Once a metric has been updated at the
+forward operator’s call path and sequence ID. In PyTorch,                bottom of a call path, it is propagated to the root node of the
+
+
+
+                                                                    53
+DeepContext: A Context-aware, Cross-platform, and Cross-framework Profiling Tool           ASPLOS ’25, March 30-April 3, 2025, Rotterdam, Netherlands
+
+
+                                                                                 interface allows analysis from three key dimensions, typi-
+                                                                                 cally executed through a workflow of call path search, metrics
+                                                                                 analysis, and visualization. The process starts with 1 Pro-
+      Insert Call Path                                                           gram Structure Analysis, which traverses calling contexts
+                                                                                 and matches call paths given patterns. This is followed by
+                                               Propagate Metrics                  2 Model Analysis and 3 Operator Analysis, where perfor-
+                                                                                 mance metrics are queried for semantic nodes (such as train-
+                            metric_type0     metric_type1    metric_type2
+                                                                                 ing, inference, loss functions, and individual operators) and
+                                                                                 custom filters are applied to detect potential issues. Finally,
+                         Aggregate Metrics                                       the detected problems are flagged with warning messages
+                                                                                 and reported in the GUI.
+Figure 5. Operations for building a calling context tree and
+adding performance metrics.                                                         Example Analyses. Beyond custom analysis created by
+                                                                                 users, DeepContext implements a set of example analyses
+                                                                                 to detect common performance issues using the analysis API.
+calling context tree, updating the metric along the entire call                  Below we demonstrate some of the example analyses:
+path.                                                                             1 Hotspot Identification
+                                                                                 This analysis identifies the nodes that spend more time than
+   GPU Metrics. DeepContext can collect both coarse- and
+                                                                                 a given threshold and returns their call paths.
+fine-grained metrics on Nvidia and AMD GPUs. Example
+                                                                                 1 total_time = call_tree . root . time
+coarse-grained metrics include time, parallelism, and shared
+                                                                                 2 for n in call_tree . kernels :
+memory usage, and fine-grained metrics include instruction                       3   if n . time / total_time > hotspot_threshold :
+samples of GPU kernels. It first registers callbacks for GPU                     4     flag_hotspot ( n )
+APIs using DLMonitor, then specifies the metrics to pro-
+                                                                                  2 Kernel Fusion Analysis
+file by calling CUPTI or RocTracer APIs. At each callback,
+                                                                                 This analysis detects potential inefficiencies caused by the
+the profiler emits a unique correlation ID, retrieves the call
+                                                                                 launch of many small kernels by identifying frames that
+path, and associates the correlation ID with the call path.
+                                                                                 contain a large number of kernels with short GPU execution
+GPU metrics are gathered asynchronously without blocking
+                                                                                 times.
+GPU API calls from the CPU. When the GPU buffer storing
+                                                                                 1 for n in bfs ( call_tree . nodes ) :
+metrics is full, DeepContext flushes the metrics, using the
+                                                                                 2   if n . gpu_time / n . count < gpu_threshold :
+correlation ID to link and aggregate them with the corre-
+                                                                                 3     flag_issue (n , " Small ␣ GPU ␣ kernels " )
+sponding call path. Note that if fine-grained metrics, such
+as instruction samples, are collected, we will extend the call                    3 Forward/Backward Operator Analysis
+path by inserting the PC of each instruction collected.                          This analysis identifies deep learning operators whose back-
+                                                                                 ward pass takes significantly longer than the forward pass,
+   CPU Metrics. DeepContext can profile GPU metrics and                          potentially indicating optimization opportunities because
+CPU metrics in the same run using Linux system calls or                          backward phase shouldn’t take significantly longer than its
+CPU measurement substrates. For example, DeepContext                             forward counterpart.
+invokes the sigaction system call to registers a signal call-                    1 for n in call_tree . operators :
+back for CPU_TIME and REAL_TIME events. Once a sample is                         2   if n . backward . time / n . forward . time > 2:
+triggered, it will get the current CPU or REAL time, subtract                    3     flag_issue (n , " Backward ␣ abnormality " )
+the previous timestamp from it, and use the result as the in-                     4 Fine-grained Stall Analysis
+terval between two samples. Next, DeepContext will obtain                        This analysis identifies fine-grained stall reasons within
+the current call path by calling dlmonitor_callpath_get                          hotspot GPU kernels. Stall reasons for each GPU instruc-
+and associate the interval with the call path. The profiler can                  tion can be collected using the instruction sampling APIs
+also register Linux perf events or invoke PAPI API to obtain                     available on Nvidia and AMD GPUs.
+metrics from hardware counters.                                                  1 hotspots = hotspot_analysis ( call_tree )
+                                                                                 2 stalls = []
+4.3 Performance Analyzer                                                         3 for n in hotspots :
+The performance analyzer of DeepContext provides a com-                          4   for c in n . children :
+prehensive framework for analyzing the profile results and                       5      if c . stalls > stall_threshold :
+identifying potential performance issues in deep learning                        6        stalls . append ( c )
+workloads. It initializes the analysis environment by map-                       7 stall_reasons = topk ( stalls )
+                                                                                 8 flag_issue (n , " Kernel ␣ is ␣ mainly ␣ stalled ␣ by ␣ {
+ping GPU/CPU instructions back to the source code using
+                                                                                       stall_reasons } " )
+the DWARF information. We have designed a flexible Python
+
+
+
+                                                                            54
+ASPLOS ’25, March 30-April 3, 2025, Rotterdam, Netherlands                                                         Qidong Zhao et al.
+
+
+ 5 CPU Latency Analysis                                               the same CPU, 2048 GB RAM, and an AMD MI250 GPU
+This analysis traverses the calling context tree in the top-          (64 GB, 208 Compute Units, 362.1 FP16 TFLOP/s, 3.2 TB/s
+down manner to identify frames whose CPU time is signif-              bandwidth).
+icantly higher than GPU time, indicating potential imbal-
+anced workload or synchronization issues.                               Workloads. We used DeepContext to profile the ML-
+1 for n in bfs ( call_tree . nodes ):
+                                                                      Commons Algorithm Efficiency benchmark [16], imple-
+2   if n. cpu_time / n. gpu_time > cpu_threshold :                    mented in both PyTorch [6] and JAX [11]. We evaluated
+3     flag_issue (n , " CPU ␣ time ␣ abnormality " )                  the eager mode of PyTorch and the JIT mode of JAX. We run
+                                                                      each model for 100 iterations using different profiling tools.
+4.4 GUI                                                                 The following workloads and datasets were used.
+DeepContext integrates a lightweight GUI built on the VS-                 • Conformer [25] with the LibriSpeech [44] dataset.
+Code API, supporting VSCode and other compatible IDEs                     • DLRM-small [39] with the Criteo 1TB [15] dataset.
+such as VSCodium [2] and Eclipse Theia [1]. It features inter-            • U-Net [48] with the fastMRI [57] dataset.
+active flame graphs [23] with both top-down and bottom-up                 • GNN [7] with the OGBG-MOLPCBA [28] dataset.
+views for visualizing calling context trees, and highlights               • ResNet [26] with the ImageNet [17] dataset.
+performance hotspots identified by the performance ana-                   • Vision Transformer [18] with the ImageNet dataset.
+lyzer. Users can click on frames to inspect detailed metrics              • Transformer-Big [54] with the WMT[10] dataset.
+and navigate directly to relevant source code, streamlining               • Llama 3 [19] inference with a sample prompt from
+the performance debugging process.                                          huggingface official example.
+                                                                          • Gemma [52] with the same prompt as Llama 3.
+4.5 API and Hardware Adaptability                                         • nanoGPT [34] with the same prompt as Llama 3.
+DeepContext’s modular architecture enables efficient adap-               Results. We measured the end-to-end running time of
+tation to evolving frameworks and hardware through clear              each workload under three circumstances: without profiler
+separation of component dependencies. Referring to the com-           enabled, DeepContext with Python and framework call
+ponent division shown in Figure 2, DLMonitor component                paths obtained from DLMonitor, and DeepContext with
+only requires updates when framework APIs change, while               Python, deep learing framework, and native C/C++ call paths.
+the Profiler component is updated only when hardware pro-             Then we divide the running time of DeepContext enabled
+filing interfaces evolve. Meanwhile, the Performance Ana-             by the running time without DeepContext enabled to cal-
+lyzer and GUI remain framework and hardware-agnostic,                 culate the overhead, as shown in Figure 6.
+operating solely on abstracted performance data. This tar-               We measured the end-to-end running time of each work-
+geted update approach minimizes maintenance overhead as               load under four circumstances: without profiler enabled, with
+deep learning frameworks like PyTorch and JAX frequently              framework profiler (PyTorch profiler or JAX profiler) enabled,
+modify their internal structures.                                     DeepContext operating in Lightweight Mode (collecting
+    DeepContext achieves robust cross-generation hardware             only Python and framework call paths), and DeepContext
+support through abstracted profiling interfaces that leverage         operating in Comprehensive Mode (collecting Python, deep
+common APIs across GPU generations (CUPTI for Nvidia,                 learning framework, and native C/C++ call paths). Then we
+RocTracer for AMD). The Profiler’s abstraction layer maps             divide the running time of DeepContext or framework pro-
+vendor-specific metrics to a unified internal representation,         filer enabled by the running time without profiler enabled
+automatically adapting to hardware capabilities at runtime.           to calculate the overhead, as shown in Figure 6. In the fig-
+Additionally, DeepContext supports extension mechanisms               ure, "Framework Profiler" refers to the PyTorch profiler in
+including configuration-based hardware support through                PyTorch workload tests and the JAX profiler in JAX work-
+LD_AUDIT, a plugin architecture for new metric collection             load tests, "DeepContext" corresponds to our tool running
+mechanisms, and framework-agnostic analysis patterns. This            in Lightweight Mode, and "DeepContext Native" represents
+modular design ensures DeepContext can evolve alongside               our tool operating in Comprehensive Mode.
+the rapidly changing landscape of deep learning frameworks               The median running time overhead of DeepContext is
+and hardware accelerators while maintaining long-term via-            1.12× and 1.50× for PyTorch on Nvidia and AMD GPUs, re-
+bility.                                                               spectively. For JAX, its median overhead is 1.33× and 1.28×
+                                                                      on Nvidia and AMD GPUs, respectively. When the C/C++ na-
+5    Evaluation                                                       tive call path is not collected, we observed median overheads
+  Platforms. We evaluated DeepContext’s overhead on                   of 1.50× and 1.90× for PyTorch, and 1.60× and 1.46× for JAX,
+two platforms: one with an AMD EPYC 7543 CPU, 256 GB                  on Nvidia and AMD GPUs, respectively. The overhead with
+RAM, and an NVIDIA A100 SXM GPU (80 GB, 108 SMs,                      native call path is higher than the variant without the na-
+156 TF32 TFLOP/s, 2 TB/s bandwidth), and the other with               tive call path due to the additional overhead in unwinding
+
+
+
+                                                                 55
+DeepContext: A Context-aware, Cross-platform, and Cross-framework Profiling Tool                      ASPLOS ’25, March 30-April 3, 2025, Rotterdam, Netherlands
+
+
+                                             Framework Profiler-NV          DeepContext Native-NV              DeepContext-NV
+                                             Framework Profiler-AMD        DeepContext Native-AMD              DeepContext-AMD
+                                                                                                                           9           10
+            6
+
+
+            4
+ Overhead
+
+
+
+
+            2
+            1
+
+                  Conformer    DLRM-small      UNet              GNN      Resnet          ViT        Transformer-Big   Llama3-8B   Gemma-7B     NanoGPT
+
+                                  (a) Time overhead of PyTorch workloads using different profilers on Nvidia and AMD GPUs.
+            6
+
+
+            4
+ Overhead
+
+
+
+
+            2
+            1
+
+                  Conformer    DLRM-small      UNet              GNN      Resnet          ViT        Transformer-Big   Llama3-8B   Gemma-7B     NanoGPT
+
+                                    (b) Time overhead of JAX workloads using different profilers on Nvidia and AMD GPUs.
+                                             Framework Profiler-NV           DeepContext Native-NV             DeepContext-NV
+                                             Framework Profiler-AMD          DeepContext Native-AMD            DeepContext-AMD
+                                                            27       14                                8.3             ∞           ∞
+            8.0
+
+
+
+
+                                                                                                              7.44
+                                                                                                              3.77
+            6.4
+ Overhead
+
+
+
+
+            4.8
+
+            3.2
+
+            1.6
+              1
+                   Conformer    DLRM-small      UNet             GNN      Resnet           ViT       Transformer-Big   Llama3-8B   Gemma-7B      NanoGPT
+
+                                (c) Memory overhead of PyTorch workloads using different profilers on Nvidia and AMD GPUs.
+            8.0
+                                                                                                              7.44
+                                                                                                              3.77
+
+
+
+
+            6.4
+ Overhead
+
+
+
+
+            4.8
+
+            3.2
+
+            1.6
+              1
+                   Conformer    DLRM-small      UNet             GNN      Resnet           ViT       Transformer-Big   Llama3-8B   Gemma-7B      NanoGPT
+
+                                  (d) Memory overhead of JAX workloads using different profilers on Nvidia and AMD GPUs.
+
+Figure 6. Comparison of time and memory overheads (normalized to baseline without profiling) across various workloads
+using DeepContext, the PyTorch profiler, and the JAX profiler.
+
+C/C++ call paths and concatenating them with Python and                                    In comparison, PyTorch profiler incurs a median overhead
+framework call paths.                                                                   of 1.06× and 1.01× on Nvidia and AMD GPUs, respectively.
+   The median running time overhead of DeepContext in                                   JAX profiler incurs a median overhead of 1.17× and 1.10×
+Lightweight Mode is 1.12× and 1.50× for PyTorch on Nvidia                               on Nvidia and AMD GPUs, respectively. Without native call
+and AMD GPUs, respectively. For JAX, its median over-                                   path collection, the overhead of DeepContext is compara-
+head in Lightweight Mode is 1.33× and 1.28× on Nvidia                                   ble to that of framework profilers. We do observe a much
+and AMD GPUs, respectively. When operating in Compre-                                   higher time overhead from profiling Llama3 and Gemma-7B
+hensive Mode, we observed median overheads of 1.50× and                                 using PyTorch. The overhead is caused by two factors: our
+1.90× for PyTorch, and 1.60× and 1.46× for JAX, on Nvidia                               frame unification system, which identifies the same file path
+and AMD GPUs, respectively.
+
+
+
+                                                                                   56
+ASPLOS ’25, March 30-April 3, 2025, Rotterdam, Netherlands                                                                  Qidong Zhao et al.
+
+
+                                                     Table 2. Summary of case studies.
+
+ Deep Learning Model            Dataset           Platform             Analysis Client                 Optimization Method         Speedup
+                                                                                                          replace aten::index
+       DLRM-small             Criteo 1TB            Nvidia      3 Forward/Backward Operator Analysis                                 1.66×
+                                                                                                       with aten::index_select
+                                                                                                          replace aten::index
+          GNN              OGBG-MOLPCBA             Nvidia      3 Forward/Backward Operator Analysis                                 1.07×
+                                                                                                       with aten::index_select
+                                                                                                        Avoid channel_first to
+          UNet                  fastMRI             Nvidia      1 Hotspot Identification                                             1.28×
+                                                                                                       channel_last conversion
+                                                                                                         Match worker_num
+          UNet                  fastMRI             Nvidia      5 CPU Latency Analysis                                               1.15×
+                                                                                                          with #CPU cores
+                                                                                                          Fuse small kernels
+     Transformer-Big             WMT                Nvidia      2 Kernel Fusion Analysis                                             1.06×
+                                                                                                        using torch.compile
+                                                                                                          Use fast data type
+         Llama3             Sample Prompt           Nvidia      4 Fine-grained Stall Analysis                                        1.25×
+                                                                                                        conversion instructions
+          UNet                  fastMRI         AMD & Nvidia    1 Hotspot Identification                 Use pinned memory           N/A
+       DLRM-small             Criteo 1TB        Nvidia-JAX                                                Fuse small kernels         1.11×
+                                                                2 Kernel Fusion Analysis
+         UNet                  fastMRI         Nvidia-PyTorch                                           using torch.compile          1.02×
+
+
+and line number, and our metrics aggregation and propaga-                  we highlight the specific advantage of DeepContext’s multi-
+tion mechanism along the call paths, introduces additional                 layer approach over the most relevant vendor tool, focus-
+overhead. These two factors are especially significant with                ing on the comparison that best illustrates DeepContext’s
+such workloads launch many small kernels.                                  added value.
+   The median memory overhead of DeepContext is 1.00×-
+2.44×, compared with that of 1.29×-27.28× and 1.27×-6.98×                  6.1    Forward/backward Operator Analysis
+of PyTorch and JAX profilers, respectively. Note that the
+memory overhead of the framework profilers will increase
+with the increase in the number of iterations. Also, the Py-
+Torch profiler encountered out-of-memory issues when ex-
+porting the profiling database to disk, failing to provide any
+insights for optimization. DeepContext incurs significant
+lower memory overhead compared to these tools because it
+aggregates metrics at runtime and thus is more feasible for
+long-running workloads.
+
+
+6    Insights obtained by DeepContext
+In this section, we present seven performance optimization
+cases conducted using additional insights obtained from
+DeepContext, which were not discoverable through vendor-
+specific profiling tools alone. By comparing DeepContext’s
+                                                                           Figure 7. Forward-Backward association view of the DLRM-
+cross-layer analysis capabilities with industry-standard tools
+                                                                           small workload.
+like Nvidia Nsight Systems, Nsight Compute, and AMD
+rocprof—each selected as the most capable tool for its respec-
+tive case—we demonstrate how DeepContext’s unified view                      We profiled the DLRM-small workload using the Criteo
+of Python code, framework operations, and hardware execu-                  1TB dataset on the A100 platform. In DeepContext’s bot-
+tion reveals critical optimization opportunities that remain               tom up view, we noticed that the hotspot is on the
+hidden when using conventional profilers. These cases span                 indexing_backward_kernel kernel (30.5s), which takes
+diverse workloads including DLRM [39], U-Net [48], Trans-                  39.6% of the total GPU kernel time. Using the Deep
+former [54], GNN [7], and Llama3 [19] models across both                   Context’s framework call path, which associates the
+Nvidia and AMD platforms, resulting in performance im-                     forward call path with the corresponding backward ker-
+provements of 6-40%, as summarized in Table 2. For each case,              nels, we found that this GPU kernel is triggered by
+
+
+
+                                                                      57
+DeepContext: A Context-aware, Cross-platform, and Cross-framework Profiling Tool      ASPLOS ’25, March 30-April 3, 2025, Rotterdam, Netherlands
+
+
+the backward computation of aten::index called by
+embedding_table[idx_lookup], as illustrated in Figure 7.
+   It should be noted that while the backward computa-
+tions of aten::index take 39.9% of the total time, the for-
+ward computation takes only 0.8% of the total time. This
+discrepancy is caused by the deterministic nature [24] of
+aten::index, which serializes GPU threads accessing the
+same memory location and is unnecessary in this workload
+if determinism is not required. To optimize the code, we
+substituted aten::index with a non-deterministic opera-
+tor aten::index_select, which uses atomic operations in
+the backward phase to avoid serialization and reduced the
+total GPU time from 73.2s to 44.0s. We also observed
+the same problem in the GNN workload; applying the same                            Figure 9. Top-down view of Transformer-Big.
+optimization reduced the total GPU time from 3.97s to
+3.71s.
+   Comparison with Nsight Systems. Although Nsight Sys-                     conversion issues, we optimized the code by storing input
+tems can capture the indexing_backward_kernel as a GPU                      tensors with channels_last layout before computations,
+hotspot, it does not automatically correlate backward ker-                  and refactored LayerNorm and InstanceNorm layers to store
+nels with their corresponding forward operators in a unified                weights in the channels_last layout to avoid conversion.
+top-down or bottom-up hierarchy. Consequently, users must                   This optimization reduced the end-to-end time of 100 it-
+manually traverse event traces to identify the invocation                   erations from 54s to 42s.
+context of the corresponding forward operator aten::index                      Comparison        with      Nsight      Systems. While
+(with DL framework expertise) to make optimizations. In                     Nsight Systems can display CUDA kernels (such as
+contrast, DeepContext integrates framework call paths,                      cudnn::nchwToNhwcKernel) in its trace timeline, it does
+providing a direct link between the backward kernel and its                 not associate them with PyTorch operators that invoke
+forward invocation site, facilitating the determination of the              these kernels. As a result, users have to manually locate
+feasibility of non-deterministic optimization and streamlin-                where these conversion kernels are triggered in the timeline
+ing the modification of the source code.                                    and correlate them with PyTorch operators based on the
+6.2 Hotspot Identification with Call Path                                   kernels invoked before and after, as well as the events that
+                                                                            happened on the CPU, demanding considerable manual
+When profiling U-Net using the fastMRI dataset on the A100                  effort and deep DL expertise. In contrast, DeepContext
+platform, we observed that the cudnn::nchwToNhwcKernel                      associates each kernel with its PyTorch and native C/C++
+kernel takes 15.4% of the GPU time. Using DeepContext’s                     call path in a unified call path to provide insights about
+                                                                            where and why layout conversion happens, expediting the
+                                                                            diagnosis of low-level performance issues.
+
+                                                                            6.3 Kernel Fusion Analysis
+                                                                            Using DeepContext, we profiled the Transformer-Big work-
+                                                                            load on the A100 platform. DeepContext can gather multi-
+                                                                            ple metrics in a single run, such as the number of invocations,
+                                                                            the number of warps and blocks, as well as the number of
+                                                                            shared memory and registers, in addition to the GPU time.
+          Figure 8. The bottom-up view of U-Net.                            These metrics are attributed to the corresponding frames in
+                                                                            the call paths to assist performance analysis.
+framework and Python call paths, we identified every Py-                       For instance, from the top-down view in Figure 9, we ob-
+Torch operator that invokes the conversion. In addition, with               served that loss_fn takes 7.36s, which is 23.9% of total time.
+the help of native call paths, we also identified that the in-              Under this frame, there are three different kernels invoked:
+put tensor’s memory format is converted from PyTorch’s                      including softmax, copy, and nll_loss, each with the same
+default channels_first layout [53] to the channels_last                     number of invocations. The kernel fusion analysis suggests
+layout—a layout that is more efficient for CUDNN—and then                   an opportunity for optimization by combining small kernels
+reverted back to channels_first after the computations,                     to reduce overall time. Further analysis expanding the call
+introducing excessive overhead. To address memory format                    paths also reveals that the softmax kernel has relatively low
+
+
+
+                                                                       58
+ASPLOS ’25, March 30-April 3, 2025, Rotterdam, Netherlands                                                            Qidong Zhao et al.
+
+
+register usage, which implies that fusing this kernel will not         provided by DeepContext and found that the imple-
+cause significant register overhead. Based on the suggestion           mentation of aten::instance_norm for AMD GPUs pro-
+and observation, we manually fused these small kernels into            vided by PyTorch reused the same kernel template—
+a single and more efficient kernel. After optimization, the            batch_norm_backward_cuda_template—as that for Nvidia
+total GPU time is decreased from 30.5s to 23.9s.                       GPUs [12]. However, through further investigation, we ob-
+                                                                       served that performance can vary drastically when using
+   Comparison with Nsight Systems. When profiling the                  different PyTorch versions (i.e., 2.7.0 and 2.6.0) and ROCm
+Transformer-Big workload using Nsight Systems, small ker-              versions (i.e., 6.3, 6.2, and 6.0). Performance regressions were
+nels like softmax or copy may appear as fragmented events              observed, where using newer versions of software can yield
+in the trace view. Without explicit NVTX annotations [42]              up to 18.29× slowdown on this kernel compared to older
+around loss_fn, it is labor-intensive to cluster these kernels         versions. While DeepContext can detect that this kernel
+and identify a fusion opportunity. In contrast, DeepContext            suffers from significant memory stalls, it does not provide
+not only flags these sub-kernels under the same Python call            sufficient visibility into the exact underlying cause, which
+path with its automated kernel fusion analysis but also re-            could involve page faults or other system-level issues. Using
+ports their resource usage collectively, making it evident that        pinned memory can offer a workaround to achieve perfor-
+fusion can be beneficial and does not exceed register limits.          mance comparable to Nvidia GPUs. We also employed other
+                                                                       tools, including rocprof and PyTorch profiler, but they did
+                                                                       not offer additional clarity into the performance discrepancy
+6.4 CPU Latency Analysis                                               as well. We have reported this issue to AMD for further
+We enabled both CPU and GPU metrics to profile the U-Net               investigation.
+workload. The CPU latency analysis highlighted that the call
+                                                                          Comparison with rocprof. Nsight Systems is primarily
+path to the data_selection function takes 69% of the CPU
+                                                                       optimized for Nvidia GPUs, whereas its counterpart, rocprof,
+time with 16 threads running concurrently, while the GPU
+                                                                       lacks an equivalent visualization view. This discrepancy
+time of the same frame is only 1.3 seconds. Further investi-
+                                                                       makes it challenging to compare performance across dif-
+gation shows that the first iteration of loading data from the
+                                                                       ferent GPUs. Furthermore, while rocprof can collect basic
+disk to the memory takes 10 seconds, and the GPU remains
+                                                                       CPU and GPU events, it lacks call path correlation with
+idle. By expanding the call paths of data_selection, we
+                                                                       Python and C/C++ native frames. DeepContext provides
+noted that an inefficient setting of parallel threads has been
+                                                                       consistent multi-layer profiling across both AMD and Nvidia
+invoked. Our allocated node only has 6 physical CPU cores,
+                                                                       backends, enabling an apples-to-apples comparison of oper-
+but the data loader is hard coded with 16 threads to load
+                                                                       ator hotspots such as instance_norm.
+the data, causing significant scheduling overhead. After we
+reduced the thread number to 8, we reduced the end-to-end
+time of 100 iterations by 7s, from 54s to 47s.
+
+   Comparison with Nsight Systems. Although Nsight Sys-
+tems offers CPU profiling features, correlating CPU events
+directly with GPU idle times typically requires inspection             (a) Flame Graph of Nvidia GPU. Hotspot is on operator
+across multiple traces and manual alignment. DeepContext               aten::conv2d, which is as expected.
+automatically integrates both CPU and GPU metrics within
+their respective contexts, enabling users to immediately iden-
+tify where CPU inefficiencies cause GPU idle periods.
+
+6.5 AMD vs Nvidia
+We profiled the U-Net workload on both AMD and Nvidia                  (b) Flame Graph of AMD GPU. Hotspot is on operator
+GPUs. From the top-down view shown in Figure 10, we                    aten::instance_norm, which is abnormal.
+can see differences between these two platforms. Fig-
+ure 10a shows that on Nvidia GPUs, the performance                     Figure 10. Performance comparison on AMD and Nvidia.
+hotspot is on the convolution operator aten::conv2d; on
+the other hand, Figure 10b shows that on AMD GPUs,
+the performance hotspot lies on the instance norm op-                  6.6 JAX vs PyTorch
+erator aten::instance_norm. In order to find out the                   We compared the performance of JAX and PyTorch across
+cause of performance degradation on AMD GPU, we                        two datasets/models: DLRM-small and U-Net. Our results
+checked the low-level call paths of aten::instance_norm                show that JAX significantly outperforms PyTorch in all tasks,
+
+
+
+                                                                  59
+DeepContext: A Context-aware, Cross-platform, and Cross-framework Profiling Tool         ASPLOS ’25, March 30-April 3, 2025, Rotterdam, Netherlands
+
+
+achieving performance improvements exceeding 50%. By                        and float16/float8 and achieved non-trivial speedups. For ex-
+comparing the number of kernel operations, we observed                      ample, the conversion from float8 to float32 is 3.47×
+that the JAX version consistently requires fewer operations                 faster with each thread loading and converting four
+than its PyTorch counterpart. This substantial performance                  float8 elements simultaneously, with the LlamaRMSNorm
+gap is primarily attributed to the advantages of JAX’s XLA                  module improved by 1.25×. On Nvidia Ada or later archi-
+compiler, which effectively fuses operators to reduce redun-                tectures, we can further adopt cvt with e5m2x2 [43] to first
+dant memory access and overlap compute and memory in-                       convert multiple float8 elements using a single instruction
+structions. To narrow this performance gap, we can use                      without workarounds such as byte permutation.
+torch.compile to optimize some workloads, and we ob-
+served a 1.11× speedup and a 1.02× speedup in DLRM-                            Comparison with Nsight Compute (NCU). Both NCU
+small and UNet, respectively. However, we observed that                     and DeepContext can collect instruction samples, but NCU
+it cannot successfully compile all PyTorch modules, yields                  is approximately 100×1 slower than DeepContext for sev-
+slowdowns in cases such as GNN and ResNet, and may                          eral reasons. First, NCU synchronizes the CPU and GPU after
+cause significant autotuning overhead, especially with the                  each GPU kernel instance, whereas DeepContext avoids
+max-autotune mode.                                                          synchronization and parses binary information offline. Ad-
+                                                                            ditionally, NCU often applies kernel replay to collect addi-
+                                                                            tional metrics along with instruction samples. The profil-
+   Comparison with Nsight Systems. While Nsight Sys-                        ing view in NCU displays each kernel instance separately
+tems can reveal that JAX and PyTorch versions execute differ-               without aggregating metrics, making it difficult to identify
+ent kernels with varying counts, it provides no mechanism                   performance hotspots in source code. In contrast, the con-
+to correlate these differences with high-level framework op-                text view in DeepContext clearly reveals that all kernels
+erations or optimization strategies. Users must manually                    in the LlamaRMSNorm kernel are affected by data conversion,
+analyze kernel patterns to hypothesize potential optimiza-                  leading to an increased memory and compute overhead.
+tion opportunities, requiring specialized knowledge of both
+frameworks. In contrast, DeepContext’s automated analy-                     7      Limitations and Future Work
+sis compares average kernel execution times and identifies
+patterns indicative of suboptimal kernel fusion in the Py-                  While DeepContext offers rich profiling for deep-learning
+Torch implementation. This cross-framework analysis capa-                   workloads, its primary limitation is the overhead incurred
+bility enables DeepContext to automatically recommend                       when unwinding call paths for workloads with many
+specific optimization approaches for PyTorch workloads                      small kernels. We will mitigate this by adopting call-path
+based on observed patterns in JAX’s execution, effectively                  caching techniques [60]. In the future, we also plan to
+bridging the semantic gap between different framework im-                   extend DeepContext to PyTorch workloads that employ
+plementations.                                                              torch.compile, leveraging the JAX-style tracing already in
+                                                                            place to capture operator call paths.
+
+6.7 Fine-grained Stall Analysis                                             8      Conclusions
+We profiled the Llama3 workload running low-precision                       DeepContext addresses a critical gap in performance pro-
+including float16 and float8 using fine-grained instruc-                    filing for deep learning workloads in heterogeneous com-
+tion sampling. On both AMD and Nvidia GPUs, we have                         puting environments, where the interaction between CPUs,
+identified time spent on the data conversion operators (i.e.,               GPUs, and deep learning frameworks is inherently complex.
+torch.to) in the LlamaRMSNorm module [20], due to the                       DeepContext fulfills this need by providing a multi-level,
+fact that the variance calculation has to be done in float32                automated analysis that bridges the different layers of the
+for numeric stability [51]. The fine-grained stall analysis                 software and hardware stack. Our detailed case studies and
+identifies non-trivial constant memory misses due to the                    evaluations show that DeepContext improves the ability to
+loading of constants for each CTA. Since the input is small,                identify and resolve performance bottlenecks in deep learn-
+there is a relatively high overhead in reading the constant                 ing workflows.
+memory compared to loading the data itself. Additionally,
+we observed math dependency-related stalls caused by non-                   Acknowledgments
+vectorized data conversion instructions from/to float32.                    We would like to thank George Mason University and AMD
+To optimize the kernel, we can (1) ensure that each block                   for providing the compute facility. This work is supported
+loads the minimum number of bytes required to use vec-                      by a donation from AIGCSEMI LLC and by NSF Awards
+torized data conversion instructions, and (2) fuse the con-                 2411134, 2411136, and 2417469.
+version operator with other operators to ensure that the
+constant memory overhead is minimized. We adopted the                       1We only compared the two tools in this case but not all due to the extremely
+
+former to enable vectorized data conversions between float32                high overhead caused by NCU.
+
+
+
+
+                                                                       60
+ASPLOS ’25, March 30-April 3, 2025, Rotterdam, Netherlands                                                                                 Qidong Zhao et al.
+
+
+References                                                                              scale. arXiv preprint arXiv:2010.11929 (2020).
+ [1] 2024. Eclipse Theia: Cloud and Desktop IDE Platform. https://theia-           [19] Abhimanyu Dubey, Abhinav Jauhri, Abhinav Pandey, Abhishek Ka-
+     ide.org/. Accessed: 2024-10-17.                                                    dian, Ahmad Al-Dahle, Aiesha Letman, Akhil Mathur, Alan Schelten,
+ [2] 2024. VSCodium: Open-Source Visual Studio Code Without Microsoft                   Amy Yang, Angela Fan, et al. 2024. The llama 3 herd of models. arXiv
+     Branding. https://vscodium.com/. Accessed: 2024-10-17.                             preprint arXiv:2407.21783 (2024).
+ [3] Josh Achiam, Steven Adler, Sandhini Agarwal, Lama Ahmad, Ilge                 [20] Hugging Face. 2024. LLaMA Model Implementation in Transformers
+     Akkaya, Florencia Leoni Aleman, Diogo Almeida, Janko Altenschmidt,                 Library. https://github.com/huggingface/transformers/blob/main/src/
+     Sam Altman, Shyamal Anadkat, et al. 2023. Gpt-4 technical report.                  transformers/models/llama/modeling_llama.py#L69. Accessed: 2024-
+     arXiv preprint arXiv:2303.08774 (2023).                                            10-19.
+ [4] AMD. 2025. Using rocprofv3. https://rocm.docs.amd.com/projects/               [21] Python Software Foundation. 2024. cProfile: Python Code Profiler.
+     rocprofiler-sdk/en/latest/how-to/using-rocprofv3.html. Accessed:                   https://docs.python.org/3/library/profile.html. Accessed: 2024-10-16.
+     2025-03-02.                                                                   [22] James Gleeson, Moshe Gabel, Gennady Pekhimenko, Eyal de Lara, Sri-
+ [5] AMD Inc. 2024. ROCm Tracer (Roctracer). https://github.com/ROCm-                   vatsan Krishnan, and Vijay Janapa Reddi. 2021. RL-Scope: Cross-stack
+     Developer-Tools/roctracer. Accessed: 2024-10-12.                                   profiling for deep reinforcement learning workloads. Proceedings of
+ [6] Jason Ansel, Edward Yang, Horace He, Natalia Gimelshein, Animesh                   Machine Learning and Systems 3 (2021), 783–799.
+     Jain, Michael Voznesensky, Bin Bao, Peter Bell, David Berard, Evgeni          [23] Brendan Gregg. 2016. The flame graph. Commun. ACM 59, 6 (2016),
+     Burovski, et al. 2024. PyTorch 2: Faster Machine Learning Through                  48–57.
+     Dynamic Python Bytecode Transformation and Graph Compilation.                 [24] Sam Gross. 2020. Issue #41162: Advanced indexing gradient is ex-
+     (2024).                                                                            tremely slow when there are many duplicate indices. https://github.
+ [7] Peter W Battaglia, Jessica B Hamrick, Victor Bapst, Alvaro Sanchez-                com/pytorch/pytorch/issues/41162#issuecomment-655834491. Meta.
+     Gonzalez, Vinicius Zambaldi, Mateusz Malinowski, Andrea Tacchetti,            [25] Anmol Gulati, James Qin, Chung-Cheng Chiu, Niki Parmar, Yu Zhang,
+     David Raposo, Adam Santoro, Ryan Faulkner, et al. 2018. Relational                 Jiahui Yu, Wei Han, Shibo Wang, Zhengdong Zhang, Yonghui Wu, et al.
+     inductive biases, deep learning, and graph networks. arXiv preprint                2020. Conformer: Convolution-augmented transformer for speech
+     arXiv:1806.01261 (2018).                                                           recognition. arXiv preprint arXiv:2005.08100 (2020).
+ [8] Emery D Berger. 2020. Scalene: Scripting-language aware profiling             [26] Kaiming He, Xiangyu Zhang, Shaoqing Ren, and Jian Sun. 2016. Deep
+     for python. arXiv preprint arXiv:2006.03879 (2020).                                residual learning for image recognition. In Proceedings of the IEEE
+ [9] Bimal Biswal. [n. d.]. Monkey Patching in Python. Software                         conference on computer vision and pattern recognition. 770–778.
+     Technology Tips ([n. d.]). Archived from the original on 22 August            [27] Jordan Hoffmann, Sebastian Borgeaud, Arthur Mensch, Elena
+     2012. Retrieved 9 December 2013.                                                   Buchatskaya, Trevor Cai, Eliza Rutherford, Diego de Las Casas,
+[10] Ondřej Bojar, Rajen Chatterjee, Christian Federmann, Yvette Graham,                Lisa Anne Hendricks, Johannes Welbl, Aidan Clark, et al. 2022.
+     Barry Haddow, Shujian Huang, Matthias Huck, Philipp Koehn, Qun                     Training compute-optimal large language models. arXiv preprint
+     Liu, Varvara Logacheva, et al. 2017. Findings of the 2017 conference               arXiv:2203.15556 (2022).
+     on machine translation (wmt17). Association for Computational Lin-            [28] Weihua Hu, Matthias Fey, Marinka Zitnik, Yuxiao Dong, Hongyu Ren,
+     guistics.                                                                          Bowen Liu, Michele Catasta, and Jure Leskovec. 2020. Open graph
+[11] James Bradbury, Roy Frostig, Peter Hawkins, Matthew James Johnson,                 benchmark: Datasets for machine learning on graphs. Advances in
+     Chris Leary, Dougal Maclaurin, George Necula, Adam Paszke, Jake                    neural information processing systems 33 (2020), 22118–22133.
+     VanderPlas, Skye Wanderman-Milne, and Qiao Zhang. 2018. JAX:                  [29] Intel Corporation. 2024. Intel VTune Profiler. https://www.intel.com/
+     composable transformations of Python+NumPy programs. http://                       content/www/us/en/developer/tools/oneapi/vtune-profiler.html. Ac-
+     github.com/google/jax                                                              cessed: 2024-10-12.
+[12] PyTorch       Contributors.        2024.                  Normaliza-          [30] IO Visor Project. 2024. BCC (BPF Compiler Collection). https://github.
+     tion.cuh.                  https://github.com/pytorch/pytorch/blob/                com/iovisor/bcc. Accessed: 2024-03-10.
+     44483972bdd3dcd0c047020694817210846b5d70/aten/src/ATen/                       [31] IO Visor Project. 2024. bpftrace: High-level tracing language for eBPF.
+     native/cuda/Normalization.cuh#L356. Accessed: 2024-06-26.                          https://github.com/iovisor/bpftrace. Accessed: 2024-03-10.
+[13] NVIDIA Corporation. 2021. NVIDIA DLProf: Deep Learning Profiler.              [32] JAX Team. 2024. JAX Profiler. https://jax.readthedocs.io/en/latest/
+     https://developer.nvidia.com/DLProf. Accessed: 2024-10-16.                         profiler.html. Accessed: 2024-10-12.
+[14] NVIDIA Corporation. 2024. NVIDIA Nsight Compute. https://                     [33] Jared Kaplan, Sam McCandlish, Tom Henighan, Tom B Brown, Ben-
+     developer.nvidia.com/nsight-compute. Accessed: 2024-10-16.                         jamin Chess, Rewon Child, Scott Gray, Alec Radford, Jeffrey Wu, and
+[15] Criteo A. I. Lab. 2014. Criteo 1TB Click Logs dataset. https://labs.               Dario Amodei. 2020. Scaling laws for neural language models. arXiv
+     criteo.com/2014/12/download-terabyte-click-logs/.                                  preprint arXiv:2001.08361 (2020).
+[16] George E. Dahl, Frank Schneider, Zachary Nado, Naman Agarwal,                 [34] Andrej Karpathy. 2022. NanoGPT. https://github.com/karpathy/
+     Chandramouli Shama Sastry, Philipp Hennig, Sourabh Medapati, Runa                  nanoGPT.
+     Eschenhagen, Priya Kasimbeg, Daniel Suo, Juhan Bae, Justin Gilmer,            [35] Cheng Li, Abdul Dakkak, Jinjun Xiong, Wei Wei, Lingjie Xu, and Wen-
+     Abel L. Peirson, Bilal Khan, Rohan Anil, Mike Rabbat, Shankar Krish-               mei Hwu. 2020. XSP: Across-stack profiling and analysis of machine
+     nan, Daniel Snider, Ehsan Amid, Kongtao Chen, Chris J. Maddison, Rak-              learning models on GPUs. In 2020 IEEE International Parallel and
+     shith Vasudev, Michal Badura, Ankush Garg, and Peter Mattson. 2023.                Distributed Processing Symposium (IPDPS). IEEE, 326–327.
+     Benchmarking Neural Network Training Algorithms. arXiv:2306.07179             [36] Linux Kernel Organization. 2024. Linux Perf: Performance Monitoring
+[17] Jia Deng, Wei Dong, Richard Socher, Li-Jia Li, Kai Li, and Li Fei-Fei.             for Linux. https://perf.wiki.kernel.org/index.php/Main_Page. Ac-
+     2009. Imagenet: A large-scale hierarchical image database. In 2009                 cessed: 2024-10-12.
+     IEEE conference on computer vision and pattern recognition. Ieee,             [37] Microsoft Corporation. 2024. Visual Studio Code. https://code.
+     248–255.                                                                           visualstudio.com. Accessed: 2024-10-12.
+[18] Alexey Dosovitskiy, Lucas Beyer, Alexander Kolesnikov, Dirk Weis-             [38] David Mosberger. [n. d.]. Libunwind. http://www.nongnu.org/
+     senborn, Xiaohua Zhai, Thomas Unterthiner, Mostafa Dehghani,                       libunwind. Accessed: 2024-10-12.
+     Matthias Minderer, Georg Heigold, Sylvain Gelly, et al. 2020. An              [39] Maxim Naumov, Dheevatsa Mudigere, Hao-Jun Michael Shi, Jianyu
+     image is worth 16x16 words: Transformers for image recognition at                  Huang, Narayanan Sundaraman, Jongsoo Park, Xiaodong Wang, Udit
+
+
+
+
+                                                                              61
+DeepContext: A Context-aware, Cross-platform, and Cross-framework Profiling Tool                ASPLOS ’25, March 30-April 3, 2025, Rotterdam, Netherlands
+
+
+     Gupta, Carole-Jean Wu, Alisson G Azzolini, et al. 2019. Deep learn-                 Johnson, Mary Bruno, et al. 2018. fastMRI: An open dataset and
+     ing recommendation model for personalization and recommendation                     benchmarks for accelerated MRI. arXiv preprint arXiv:1811.08839
+     systems. arXiv preprint arXiv:1906.00091 (2019).                                    (2018).
+[40] NVIDIA Corporation. 2024. NVIDIA CUPTI: CUDA Profiling Tools                   [58] Qidong Zhao, Xu Liu, and Milind Chabbi. 2020.               DrCCT-
+     Interface. https://developer.nvidia.com/cupti. Accessed: 2024-10-12.                Prof: a fine-grained call path profiler for ARM-based clusters. In
+[41] NVIDIA Corporation. 2024. NVIDIA Nsight Systems. https://developer.                 SC20: International Conference for High Performance Computing,
+     nvidia.com/nsight-systems. Accessed: 2024-10-12.                                    Networking, Storage and Analysis. IEEE, 1–16.
+[42] NVIDIA Corporation. 2025. NVIDIA Tools Extension (NVTX) Library.               [59] Keren Zhou, Laksono Adhianto, Jonathon Anderson, Aaron Cherian,
+     https://docs.nvidia.com/tools-extension/index.html. Accessed: 2025-                 Dejan Grubisic, Mark Krentel, Yumeng Liu, Xiaozhu Meng, and John
+     03-02.                                                                              Mellor-Crummey. 2021. Measurement and analysis of GPU-accelerated
+[43] NVIDIA Corporation. 2025.              Parallel Thread Execution ISA:               applications with HPCToolkit. Parallel Comput. 108 (2021), 102837.
+     Data Movement and Conversion Instructions (cvt).                 https:        [60] Keren Zhou, Jonathon Anderson, Xiaozhu Meng, and John Mellor-
+     //docs.nvidia.com/cuda/parallel-thread-execution/index.html#data-                   Crummey. 2022. Low overhead and context sensitive profiling
+     movement-and-conversion-instructions-cvt. Accessed: 2025-03-02.                     of gpu-accelerated applications. In Proceedings of the 36th ACM
+[44] Vassil Panayotov, Guoguo Chen, Daniel Povey, and Sanjeev Khudanpur.                 International Conference on Supercomputing. 1–13.
+     2015. Librispeech: an asr corpus based on public domain audio books.           [61] Keren Zhou, Xiaozhu Meng, Ryuichi Sai, and John Mellor-Crummey.
+     In 2015 IEEE international conference on acoustics, speech and signal               2021. GPA: A GPU performance advisor based on instruction sampling.
+     processing (ICASSP). IEEE, 5206–5210.                                               In 2021 IEEE/ACM International Symposium on Code Generation and
+[45] Adam Paszke, Sam Gross, Francisco Massa, Adam Lerer, James Brad-                    Optimization (CGO). IEEE, 115–125.
+     bury, Gregory Chanan, Trevor Killeen, Zeming Lin, Natalia Gimelshein,
+     Luca Antiga, et al. 2019. Pytorch: An imperative style, high-
+     performance deep learning library. Advances in neural information
+                                                                                    A      Artifact Appendix
+     processing systems 32 (2019).                                                  A.1 Abstract
+[46] William Peebles and Saining Xie. 2023. Scalable diffusion mod-
+                                                                                    DeepContext is a cross-framework, context-aware profiler
+     els with transformers. In Proceedings of the IEEE/CVF International
+     Conference on Computer Vision. 4195–4205.                                      that correlates execution contexts from high-level Python
+[47] PyTorch Team. 2024. PyTorch Profiler. https://pytorch.org/tutorials/           code, deep-learning frameworks, underlying C/C++ libraries,
+     recipes/recipes/profiler.html. Accessed: 2024-10-12.                           and GPU kernels, delivering both coarse- and fine-grained
+[48] Olaf Ronneberger, Philipp Fischer, and Thomas Brox. 2015. U-net: Con-          performance metrics to developers and researchers. Version
+     volutional networks for biomedical image segmentation. In Medical
+                                                                                    v1 of the artifact (49.2 MB, DOI 10.5281/zenodo.15589616)
+     image computing and computer-assisted intervention–MICCAI 2015:
+     18th international conference, Munich, Germany, October 5-9, 2015,             packages the profiler together with example traces, the
+     proceedings, part III 18. Springer, 234–241.                                   browser-based GUI, and the automated analyzer, and is
+[49] Sameer S Shende and Allen D Malony. 2006. The TAU parallel per-                released under the MIT License. DeepContext supports
+     formance system. The International Journal of High Performance                 PyTorch, JAX, and other CUDA/HIP-enabled frameworks
+     Computing Applications 20, 2 (2006), 287–311.
+                                                                                    across Nvidia and AMD GPUs, as well as x86 and ARM CPUs,
+[50] Daniel Snider, Fanny Chevalier, and Gennady Pekhimenko. 2023. Hot-
+     line Profiler: Automatic Annotation and A Multi-Scale Timeline for             allowing users to pinpoint multi-layer hotspots and receive
+     Visualizing Time-Use in DNN Training. Proceedings of Machine                   optimization suggestions directly in the interface. Through
+     Learning and Systems 5 (2023), 104–126.                                        representative case studies, the artifact demonstrates how
+[51] stas00. [n. d.]. [Feature Request] Implement RMSNorm Fused CUDA                unified context correlation and automatic insight generation
+     Kernel. https://github.com/NVIDIA/apex/issues/1271. Accessed: 2025-
+                                                                                    accelerate the diagnosis and tuning of complex training and
+     03-02.
+[52] Gemma Team, Thomas Mesnard, Cassidy Hardin, Robert Dadashi,                    inference workloads, making DeepContext a practical tool
+     Surya Bhupatiraju, Shreya Pathak, Laurent Sifre, Morgane Rivière, Mi-          for performance engineers tasked with optimizing hetero-
+     hir Sanjay Kale, Juliette Love, et al. 2024. Gemma: Open models based          geneous deep-learning pipelines that span diverse compute
+     on gemini research and technology. arXiv preprint arXiv:2403.08295             environments.
+     (2024).
+[53] PyTorch Team. 2024. Memory Format Tutorial. https://pytorch.org/               A.2     Artifact check-list (meta-information)
+     tutorials/intermediate/memory_format_tutorial.html. Accessed: 2024-
+     06-23.                                                                               • DOI: https://doi.org/10.5281/zenodo.15589616
+[54] Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion                    • Version: v2.0
+     Jones, Aidan N Gomez, Łukasz Kaiser, and Illia Polosukhin. 2017. At-                 • Archive size: 49.3 MB
+     tention is all you need. Advances in neural information processing                   • License: MIT License2
+     systems 30 (2017).
+[55] Vincent M Weaver, Matt Johnson, Kiran Kasichayanula, James Ralph,              A.3 Dependencies
+     Piotr Luszczek, Dan Terpstra, and Shirley Moore. 2012. Measuring
+     energy and power with PAPI. In 2012 41st international conference              Config 1: x86 + NVIDIA AMD EPYC 7543 (32c/64t, Zen 3)
+     on parallel processing workshops. IEEE, 262–268.                                    with 256 GB DDR4 and an NVIDIA A100 80 GB GPU.
+[56] Geoffrey X Yu, Tovi Grossman, and Gennady Pekhimenko. 2020. Sky-               Config 2: Arm + NVIDIA Arm Neoverse-V2 (64 cores)
+     line: Interactive in-editor computational performance profiling for                 with 480 GB LPDDR5 and an NVIDIA GH200 (Grace
+     deep neural network training. In Proceedings of the 33rd Annual ACM
+                                                                                         Hopper) 96 GB GPU.
+     Symposium on User Interface Software and Technology. 126–139.
+[57] Jure Zbontar, Florian Knoll, Anuroop Sriram, Tullie Murrell, Zhengnan          2 https://opensource.org/license/mit
+     Huang, Matthew J Muckley, Aaron Defazio, Ruben Stern, Patricia
+
+
+
+
+                                                                               62
+ASPLOS ’25, March 30-April 3, 2025, Rotterdam, Netherlands                                                     Qidong Zhao et al.
+
+
+Config 3: x86 + AMD AMD EPYC 7643 (48c/96t, Zen 3)                 1 wget https :// zenodo . org / record /15589616/ files /
+       with 2 TB DDR4 and an AMD Instinct MI250 accelera-                DeepContext . zip
+       tor (128 GB HBM2e).                                         2 unzip DeepContext . zip
+                                                                   3 # README . md in the root describes directory
+All experiments reported in the paper were conducted on
+                                                                         layout
+at least one of the configurations listed above; the pro-
+filer’s instrumentation code is ISA-agnostic and requires
+                                                                   A.5 Reuse Policy
+only Python ≥ 3.10 and ROCm 6.0+ or CUDA 11.8+ on the host.
+                                                                   This artifact is released under the MIT License.
+A.4 Getting the Artifact
+Retrieve with:
+
+
+
+
+                                                              63
+

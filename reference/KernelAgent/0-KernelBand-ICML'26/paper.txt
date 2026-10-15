@@ -1,0 +1,1148 @@
+                                         K ERNEL BAND:Steering LLM-based Kernel Optimization via Hardware-Aware
+                                                                 Multi-Armed Bandits
+
+
+                                           Dezhi Ran * 1 2 Shuxiao Xie * 2 3 Mingfang Ji 2 4 Anmin Liu 1 Mengzhou Wu 1 2 Yuan Cao 1 2 Yuzhe Guo 1 2
+                                                                    Hao Yu 5 Linyi Li 6 Yitao Hu 4 Wei Yang 7 Tao Xie 1 2 8 9
+
+
+                                                                  Abstract                                      1. Introduction
+arXiv:2511.18868v2 [cs.LG] 11 Feb 2026
+
+
+
+
+                                               High-performance GPU kernels are critical for                    The computational demands of Large Language Models
+                                               efficient LLM serving, yet their optimization re-                (LLMs) have grown exponentially (Zhao et al., 2023;
+                                               mains a bottleneck requiring deep system exper-                  Naveed et al., 2025; Floridi & Chiriatti, 2020; Team et al.,
+                                               tise. While code LLMs show promise in gener-                     2025; 2023; Bai et al., 2023), making efficient serving in-
+                                               ating functionally correct code, kernel optimiza-                frastructure a critical priority (Miao et al., 2025; Ye et al.,
+                                               tion is intrinsically a search problem over a vast               2025; Kwon et al., 2023; Fang et al., 2021; Yan et al., 2018;
+                                               optimization space. The fundamental mismatch                     Lin et al., 2024; Pan et al., 2024). At the heart of the effi-
+                                               prevents existing LLM agents from efficiently ex-                ciency lies kernel optimization (Filipovič et al., 2015; Ryoo
+                                               ploring the optimization space for diverse hard-                 et al., 2008; Lange et al., 2025), the engineering of high-
+                                               ware and compute patterns. To bridge the gap,                    performance primitives for fundamental operations such
+                                               we present K ERNEL BAND, a framework that for-                   as attention (Dong et al., 2024) and GEMM (Faingnaert
+                                               mulates kernel optimization as a Multi-Armed                     et al., 2021). Traditionally, developing these kernels has
+                                               Bandit (MAB) problem, explicitly balancing ex-                   been the exclusive domain of specialized experts, requiring
+                                               ploration and exploitation to unlock the poten-                  careful manual mapping of algorithms to complex hardware
+                                               tial of code LLMs. To navigate the infinite arm                  features, such as multi-level memory hierarchies and ten-
+                                               space of optimization strategies applied to can-                 sor core instructions (NVIDIA, 2025). To democratize this
+                                               didate kernels, we design two key mechanisms:                    process, domain-specific languages like Triton (Tillet et al.,
+                                               a hardware-aware pruning strategy via profiling                  2019) and TileLang (Wang et al., 2025b) have emerged, of-
+                                               bounds and a trace-driven clustering algorithm                   fering abstractions that hide low-level intricacies. However,
+                                               that leverages Lipschitz continuity. Theoretically,              while DSLs simplify implementation, achieving peak per-
+                                               we prove that K ERNEL BAND reduces the regret                    formance still relies heavily on compiler autotuning mecha-
+                                               bound to depend on the compact covering num-                     nisms to select configuration parameters (Gao et al., 2025;
+                                               ber of runtime clusters, ensuring sample-efficient               Zhu et al., 2022; Wang et al., 2024). As hardware complex-
+                                               discovery of high-performance kernels. Exten-                    ity increases, the configuration space suffers from a combi-
+                                               sive experiments on TritonBench-G with three                     natorial explosion (Gao et al., 2025; Ansel et al., 2024; Shi
+                                               GPU architectures and four code LLMs show that                   et al., 2023), rendering heuristic strategies computationally
+                                               K ERNEL BAND consistently and substantially out-                 prohibitive and often incapable of finding global optima
+                                               performs state-of-the-art methods with over 33%                  within reasonable timeframes.
+                                               average improvement.                                             To circumvent the preceding limitation, the community has
+                                                                                                                recently turned to code LLMs (Dong et al., 2025b; Guo et al.,
+                                           *
+                                             Equal contribution 1 Key Lab of HCST (PKU), MOE; SCS,              2024; Hui et al., 2024; Achiam et al., 2023; Caruccio et al.,
+                                         Peking University, Beijing, China 2 Beijing Tongming Lake Infor-       2024), leveraging their generative capabilities to automate
+                                         mation Technology Application Innovation Center, China 3 East
+                                                                                                                kernel optimization. Current methods primarily fall into two
+                                         China Normal University, Shanghai, China 4 Department of Com-
+                                         puter Science, Tianjin University, Tianjin, China 5 Hong Kong          categories: agent-based methods (Dong et al., 2025a; Wang
+                                         University of Science and Technology, Hong Kong, China 6 School        et al., 2025a; Zhang et al., 2025), which use iterative feed-
+                                         of Computing Science, Simon Fraser University, Burnaby, BC,            back loops to refine implementations, and training-based
+                                         Canada 7 University of Texas at Dallas, USA 8 Fudan University         methods (Baronio et al., 2025; Woo et al., 2025; Kong et al.,
+                                         Institute of Systems for Advanced Computing, China 9 Shanghai
+                                                                                                                2025), which fine-tune models on optimization-specific
+                                         Institute of Systems for Open Computing, China. Correspondence
+                                         to: Tao Xie <taoxie@pku.edu.cn>.                                       datasets. However, a fundamental mismatch persists: LLMs
+                                                                                                                are inherently trained to generate statistically probable and
+                                         Preprint. February 12, 2026.
+
+                                                                                                            1
+                                 Steering LLM-based Kernel Optimization with K ERNEL BAND
+
+functionally correct code, whereas kernel optimization is                 • Extensive experiments on TritonBench-G across three
+intrinsically a search problem over a vast and discontinu-                  GPUs and four code LLMs demonstrate that K ERNEL -
+ous optimization space (Gao et al., 2025). Consequently,                    BAND consistently outperforms state-of-the-art meth-
+existing agents struggle to balance exploration and exploita-               ods, achieving up to 1.91× geometric mean speedup,
+tion, frequently converging to suboptimal local minima or                   with ablation results confirming the structured bandit
+wasting computational resources on invalid configurations,                  policy as the key to the performance.
+thereby failing to achieve expert-level performance.
+To bridge the gap, we present K ERNEL BAND, the first                  2. Problem Formulation
+Multi-Armed Bandit (MAB) (Mahajan & Teneketzis, 2008;
+                                                                       In this section, we formalize kernel optimization as a search
+Scott, 2010; Boursier & Perchet, 2024; Silva et al., 2022)
+                                                                       problem over a generated code space and subsequently
+framework to guide LLMs in navigating the optimization
+                                                                       model it as a structured contextual MAB problem with an
+space with provable efficiency, enabled by two novel de-
+                                                                       expanding action space. We explicitly address the mismatch
+signs. Distinguished from previous methods (Zhang et al.,
+                                                                       between the generative capabilities of code LLMs (which
+2025; Kong et al., 2025) that rely on unguided generation
+                                                                       prioritize functional correctness) and the navigational re-
+or self-reflection heuristics, K ERNEL BAND formulates the
+                                                                       quirements of kernel optimization (which is intrinsically a
+problem in a contextual bandit setting (Bouneffouf et al.,
+                                                                       search problem over performance landscapes).
+2020), where each arm corresponds to the application of
+an optimization strategy (Ryoo et al., 2008) (e.g., tiling,
+vectorization) to a candidate kernel implementation. To                2.1. The Search Problem
+address the challenge of infinite action spaces, we design             Given a target hardware platform H and a naive kernel
+hardware-aware pruning, which utilizes profiling data to es-           implementation, we seek a kernel k ∗ minimizing latency
+tablish tight reward upper bounds, and trace-driven cluster-           L(k, H) while preserving functional correctness:
+ing, which exploits the Lipschitz continuity (Hager, 1979)
+of runtime behaviors to estimate rewards for unexplored                                   k ∗ = argmin L(k, H)                   (1)
+                                                                                                k∈Kvalid
+arms. Theoretically, we prove that K ERNEL BAND reduces
+the regret bound to depend on the compact covering number              where Kvalid contains all correct implementations.
+of runtime clusters rather than the vast kernel space.
+                                                                       We view optimization as traversing a directed graph G =
+We evaluate K ERNEL BAND on TritonBench-G (Li et al.,                  (V, E): nodes V are valid kernels; edges (k → k ′ ) ∈ E
+2025b) across three GPU architectures (RTX 4090, H20,                  represent applying a strategy s ∈ S via a code LLM.
+A100) and four frontier code LLMs (DeepSeek AI, 2025;
+OpenAI, 2025; Anthropic, 2025; Google, 2025). Empiri-                  The Fundamental Mismatch. While modern Code
+cal results demonstrate consistent superiority over state-of-          LLMs excel at generating functionally correct nodes (ker-
+the-art baselines, achieving up to 1.91× geometric mean                nels), they lack the hardware-specific intuition needed to
+speedup and improving the Fast@1 success rate by 39–                   select edges that efficiently navigate toward performance-
+140%. Ablation studies confirm that structured exploration             optimal regions of G. A naive LLM-based optimizer per-
+is foundational: replacing our bandit policy with LLM se-              forms what amounts to a random walk on the graph, wasting
+mantic reasoning regresses performance to 0.97× (below                 substantial efforts on transformations that yield negligible
+the reference kernel), validating that learned execution statis-       or negative speedups. Our goal is to replace this undirected
+tics outperform intuition. Furthermore, K ERNEL BAND au-               exploration with a principled decision policy that leverages
+tomatically adapts strategies to hardware bottlenecks and              both program semantics and hardware behavior.
+delivers 35–50% higher speedup per dollar than unguided
+approaches.                                                            2.2. Contextual Bandit Formulation with Expanding
+This paper makes the following main contributions:                          Action Space
+                                                                       We frame kernel optimization as an iterative frontier ex-
+   • We propose K ERNEL BAND, the first framework to                   pansion process. Starting from an initial implementation
+     formulate LLM-based kernel optimization as a MAB                  P0 = {knaive }, at each step t, the agent maintains a frontier
+     problem, effectively resolving the mismatch between               Pt ⊆ V of promising kernels discovered so far. The core
+     functional code generation and optimization search.               decision is: which kernel k ∈ Pt to expand using which
+                                                                       optimization strategy s ∈ S?
+   • We design a hardware-aware acquisition strategy that
+     combines profiling-based pruning with trace-driven                We formulate this as a contextual bandit problem rather
+     clustering, proved to efficiently explore the kernel opti-        than full Reinforcement Learning (RL) for three key reasons:
+     mization space.                                                   first, optimization trajectories are short, making immediate
+
+                                                                   2
+                                           Steering LLM-based Kernel Optimization with K ERNEL BAND
+
+
+                           Candidate
+                                                                                          KernelBand
+                           Kernel Pool
+                               ( )                                                                                                              Hardware
+                                                           Strategy Set ( )                     Sec.3.4 Hardware-                               Evaluation
+          Initial Kernel
+                ( )                                                                            Constrained Bandit                                                  Best
+                                               Profiling & Clustering                                                                       Compile & Run (      Optimized
+                                                                              Hardware                                         LLM Code                           Kernel
+                                                               Sec.3.3                    Kernel Selection (   )     Action
+                                               Sec. 3.2                       Signature                                        Generation                          (
+            Target                                            Clustering                                            (      )
+                                               Profiling                       (     )                                                       Correctness Check
+           Hardware
+                                                                              Behavior    Strategy Selection ( )
+             ( )
+                                                                              Features
+                                                                               (    )                                                          Measure Time      Output
+            Inputs
+                                                                 Update
+                                 New Valid
+                                                              Cluster Stats                          Reward( )
+                                Kernel (   )
+                                                                 (     )
+
+
+
+Figure 1. Overview of K ERNEL BAND. K ERNEL BAND interleaves runtime analysis (clustering) with hardware-aware decision making
+(masked bandit) to guide LLM-based kernel optimization.
+
+
+reward predictive of final performance; second, LLM gener-                                               Assumption 2 (Lipschitz Continuity in Behavior Space)
+ation variance complicates long-horizon value estimation;                                                The expected reward function µ(k, s) is Lipschitz contin-
+and third, bandits offer rigorous regret bounds under our                                                uous with respect to execution behavior. That is, for any
+structural assumptions, ensuring sample efficiency.                                                      strategy s and kernels k1 , k2 :
+
+Formal Model. We formulate the optimization process                                                                 |µ(k1 , s) − µ(k2 , s)| ≤ L · ∥ϕ(k1 ) − ϕ(k2 )∥2         (3)
+as a contextual bandit defined by a tuple of context, ac-
+                                                                                                         where ϕ(k) captures runtime characteristics. This implies
+tion, transition, and reward. The context space consists
+                                                                                                         that kernels with similar bottlenecks respond similarly to
+of vectors xk ∈ Rd for each candidate k ∈ Pt , encoding
+                                                                                                         optimizations.
+both static program features and dynamic execution traces
+ϕ(k). The action space at time t, denoted At = Pt × S,
+                                                                                                         Intuition. Together, these assumptions imply that while the
+represents applying strategy s to kernel k. Crucially, since
+                                                                                                         code space is infinite, the space of meaningful optimization
+the frontier |Pt | grows with t, At is unbounded, distin-
+                                                                                                         decisions is low-dimensional and structured, motivating the
+guishing this from standard fixed-arm bandits. Execut-
+                                                                                                         design of K ERNEL BAND.
+ing action at = (kt , st ) triggers a generative transition
+kt′ ∼ PLLM (· | kt , st , H), where stochasticity stems from
+the LLM’s sampling process. Finally, the agent observes                                                  3. Methodology: K ERNEL BAND
+a reward signal rt ∈ [0, 1] measuring normalized latency
+                             L(kt )−L(kt′ )
+                                                                                                         3.1. System Overview
+improvement: rt = Clip( L(k         t)
+                                            , 0, 1), where zero re-
+ward is assigned to performance regressions or compilation                                               As shown in Figure 1, K ERNEL BAND addresses the chal-
+failures. The agent’s                                                                                    lenge of the expanding action space At = Pt × S through
+                  PTobjective is to maximize the cumulative
+expected reward t=1 E[rt ].                                                                              three key components: (1) Runtime behavior characteri-
+                                                                                                         zation (Sec 3.2), which extracts execution signatures to en-
+2.3. Structural Properties Enabling Tractable Learning                                                   able knowledge sharing; (2) Dynamic clustering (Sec 3.3),
+                                                                                                         which groups similar kernels to manage the expanding ac-
+The expanding action space At poses a fundamental chal-                                                  tion space; and (3) Hardware-constrained bandit policy
+lenge: standard bandit algorithms would suffer linear regret                                             (Sec 3.4), which selects promising optimizations while prun-
+O(T ). However, kernel optimization exhibits two key struc-                                              ing physically invalid strategies.
+tural properties that make the problem tractable:
+                                                                                                         3.2. Runtime Behavior Characterization
+Assumption 1 (Hardware-Aware Gain Boundedness)
+The expected improvement from applying strategy s to                                                     We characterize each kernel k using two complementary
+kernel k is bounded by hardware limits. Formally, there                                                  representations to satisfy the smoothness and boundedness
+exists a known bounding function (Williams et al., 2009)                                                 assumptions defined in Section 2.
+B : V × S → [0, 1] such that:
+                                                                                                         Behavioral feature vector ϕ(k). For clustering ker-
+                  µ(k, s) ≜ E[rt |k, s] ≤ B(k, s)                                            (2)         nels with similar optimization responses, we define a 5-
+                                                                                                         dimensional vector ϕ(k) comprising normalized execution
+where B(k, s) estimates the maximum achievable gain                                                      time T̃ (k) and hardware counters:
+based on the gap between k’s current performance and
+the theoretical limit for strategy s on hardware H.                                                                      ϕ(k) = [T̃ (k), nreg , nsmem , dblock , ηocc ]      (4)
+
+                                                                                                    3
+                                    Steering LLM-based Kernel Optimization with K ERNEL BAND
+
+representing registers per thread, shared memory per block,          Algorithm 1 Workflow of K ERNEL BAND
+block dimension, and occupancy, respectively. Kernels close          Require: Kernel k0 , Strategies S, Budget T , Period τ =
+in ϕ-space share similar bottlenecks (Assumption 2), allow-              10, Clusters K
+ing the bandit to generalize strategy performance.                    1: P ← {k0 }, C ← {P}                       ▷ Initial single cluster
+                                                                      2: Initialize Ni,s ← 1, µ̂i,s ← 0.5 for all i, s
+Hardware signature h(k). To implement the bounding                    3: Initialize Masks Mi,s ← 1                ▷ No pruning initially
+function B(k, s) from Assumption 1, we extract a hardware             4: for t = 1 to T do
+signature h(k) using NVIDIA Nsight Compute (NVIDIA                    5:    Compute ϕ(k) for all k ∈ P
+Corporation, 2024), measuring peak throughput percentages             6:                            ▷ Periodic clustering & profiling
+for DRAM, L2 cache, and SM. These metrics identify the                7:    if t mod τ = 0 and |P| ≥ 2K then
+dominant bottleneck (memory bandwidth/compute/cache)                  8:        C ← KMeans({ϕ(k)}, K)
+for pruning physically implausible optimization strategies.           9:
+                                                                                                          (i)
+                                                                                Update centroids kc and profile hc
+                                                                                                                                  (i)
+                                                                                                                                       ←
+                                                                                         (i)
+                                                                                NCU(kc )
+3.3. Structured Exploration via Dynamic Clustering                   10:    end if
+Periodic re-clustering. Instead of maintaining a separate            11:                          ▷ Hardware-constrained selection
+bandit arm for every kernel, we maintain arms for kernel             12:    if centroids are profiled then
+                                                                                             (i)
+clusters. At iteration t, we partition the frontier Pt into          13:        Mi,s ← I[hc [Target(s)] < θsat ]
+K clusters Ct = {C1 , . . . , CK } using K-Means on {ϕ(k)}.          14:    end if
+Clusters are recomputed every τ iterations. This periodic            15:    Select (It , St ) via Eq. (6) (Masked UCB)
+update balances the need to track shifting kernel behaviors          16:    Sample kt ∈ CIt with P (k) ∝ exp(Vhw (k, St ))
+with the stability required for bandit convergence.                  17:                                        ▷ Generation & update
+                                                                     18:    kt′ ← LLM(kt , St )
+Representative profiling. Since hardware profiling is ex-            19:    if Verify(kt′ ) then
+pensive (≈ 10s), we profile only the centroid kernel kc
+                                                          (i)        20:        rt ← max(0, (T (kt ) − T (kt′ ))/T (kt ))
+of each active cluster during the re-clustering phase. We            21:        P ← P ∪ {kt′ }
+approximate the hardware constraints of the entire cluster           22:        NIt ,St ← NIt ,St + 1
+                                                                                                       r −µ̂
+using this representative, significantly reducing overhead.          23:        µ̂It ,St ← µ̂It ,St + tNI I,St ,St
+                                                                                                            t t
+                                                                     24:    end if
+3.4. Hardware-Constrained Bandit Policy                              25: end for
+                                                                         return arg mink∈P T (k)
+As depicted in Algorithm 1, we formulate the decision pro-
+cess as a masked bandit.
+                                                                     Vhw (k, St ) = θsat −h(k)[Target(St )], measuring the remain-
+Pruning via hardware potential. We define a binary
+                                                                     ing optimization headroom for strategy St on kernel k.
+mask Mi,s ∈ {0, 1} based on the hardware signature h(k).
+A strategy s is valid for cluster Ci only if it targets a non-
+saturated resource:                                                  3.5. Theoretical Analysis
+                     h                           i                   We analyze K ERNEL BAND through the lens of ϵ-optimality,
+            Mi,s = I h(kc(i) )[Target(s)] < θsat           (5)       acknowledging that in high-dimensional kernel optimiza-
+                                                                     tion, finding a solution within a small tolerance of the global
+where θsat is a saturation threshold (e.g., 75%). This reduces       optimum is the practical goal.
+the effective action space from |S| to |Svalid |.
+                                                                     Theorem 1 (Convergence to ϵ-Optimal Solution) Let µ∗
+Action selection. At iteration t, we select a cluster-               be the optimal performance and rt be the reward at step
+strategy pair (It , St ) using a Masked UCB index. Let µ̂i,s         t. Under Assumptions 1 and 2, with probability 1 − δ, the
+be the empirical mean reward and Ni,s the visit count. We            average regret satisfies:
+maximize UCB only among valid actions:
+                                                                         T
+                                                                                               r
+                                         s      !                    1X                       K|Svalid | ln T
+                                           ln t                            E[µ∗ −rt ] ≤ C                     + L·max diam(Ci )
+          (It , St ) = argmax µ̂i,s + c                 (6)          T t=1                          T              i
+                       i∈[K],s∈S           Ni,s
+                     s.t. Mi,s =1                                                                                          (7)
+                                                                     where C is a constant derived from the UCB analysis.
+Once (It , St ) is chosen, we sample a specific kernel kt ∈
+CIt via a softmax distribution over local potential scores           Due to space limit, we put the proof in Appendix B.
+
+                                                                 4
+                                Steering LLM-based Kernel Optimization with K ERNEL BAND
+
+3.6. Implementation Details                                          iterations. Main results (Section 4.2) use this default budget;
+                                                                     scaling analysis (Section 4.3.1) extends to T = 40 iterations
+We employ |S| = 6 optimization strategies: tiling, vector-
+                                                                     to study convergence behavior.
+ization, fusion, pipeline, reordering, and access & layout
+(details in Appendix D). Kernel clustering uses scikit-learn’s       Evaluation methodology. We adopt TritonBench’s hier-
+KMeans with K = 3 clusters, a value empirically vali-                archical evaluation structure. Each task optimizes a single
+dated in our experiments; clusters are recomputed every              reference kernel over T iterations. Candidates undergo two-
+τ = 10 iterations to balance adaptability with computa-              stage correctness verification: Call Accuracy checks for
+tional overhead. For hardware-informed pruning, we use               runtime errors, while Execution Accuracy verifies numerical
+NVIDIA Nsight Compute (NCU) to record throughput met-                equivalence via torch.allclose. Passing candidates
+rics (caching results by code hash), and apply a saturation          are benchmarked across 10+ input shapes; per-task speedup
+threshold θsat = 75% to filter strategies that target already-       is calculated as the ratio of total runtimes (baseline over
+saturated resources. The UCB exploration parameter is                optimized) for the best correct candidate, naturally prioritiz-
+c = 2.0. These design choices introduce minimal over-                ing computationally dominant shapes. Details are provided
+head: feature extraction adds less than 1% runtime cost, and         in Appendix H.
+clustering incurs negligible cost, scaling as O(|Pt |) every τ
+                                                                     Metrics. We report three complementary metrics: (1) Cor-
+iterations. The dominant costs remain LLM generation and
+                                                                     rect (%): Percentage of tasks yielding at least one valid
+kernel compilation (Section 4.4.1); parameter sensitivity is
+                                                                     kernel (≥ 1). (2) Fast@1 (%): Percentage of tasks where
+analyzed in Sections 4.3.1 and 4.5.
+                                                                     the best kernel achieves speedup > 1.0× (failed tasks count
+                                                                     as 0). (3) Geometric Mean Speedup: Reported in two
+4. Experiments                                                       modes. Standard mode (tables) averages only correct tasks
+                                                                     to isolate optimization quality. Fallback mode (figures) as-
+4.1. Experimental Settings
+                                                                     signs failures and regressions a baseline speedup of 1.0×,
+Benchmark. We evaluate on a corrected version of                     ensuring monotonic scaling curves and reflecting practical
+TritonBench-G (Li et al., 2025b), a popular benchmark of             deployment where users fall back to the reference kernel.
+GPU Triton kernels (details in Appendix F). After excluding
+sin_computation (which admits trivial simplification                 4.2. Main Results
+yielding artificially high speedups), we obtain 183 kernels
+                                                                     Consistent performance dominance. As shown in Ta-
+spanning 13 functional categories (e.g., attention, matrix
+                                                                     ble 1, K ERNEL BAND achieves the highest performance
+multiplication, normalization, fused operations) and 5 diffi-
+                                                                     across all GPU architectures. On A100, K ERNEL BAND
+culty levels (L1-L5).
+                                                                     attains 1.91× geometric mean speedup with 79.8% correct-
+Hardware platforms. We conduct experiments on three                  ness, outperforming the best performing baseline, GEAK,
+NVIDIA GPUs covering consumer-grade (RTX 4090) and                   by 42.5% in speedup and 66.2% in success rate. Consistent
+datacenter-grade (H20 and A100) hardware. All platforms              advantages can also be observed on RTX 4090 (1.74× vs.
+run CUDA 12.1 with Triton 3.3.0.                                     1.44×) and H20 (1.45× vs. 1.06×).
+LLM backend. We use DeepSeek-V3.2 (DeepSeek AI,
+2025) as the primary LLM backend. Detailed model con-                Robust adaptation via hardware-aware optimization.
+figurations are provided in Appendix C. We evaluate model            The most effective kernel optimizations are hardware-
+generalization with additional backends (OpenAI, 2025;               dependent: the optimal schedule/transform set must reflect
+Anthropic, 2025; Google, 2025) in Section 4.3.2.                     each platform’s compute-memory balance and architectural
+Baselines. We use: (1) GEAK (Wang et al., 2025a), an                 constraints (Williams et al., 2009; Chen et al., 2018; Zheng
+open-source Triton kernel optimization agent using iter-             et al., 2020). Interestingly, K ERNEL BAND does adapt its
+ative refinement, with minimal adaptation for our hard-              optimization choices across devices rather than applying a
+ware and (2) Best-of-N (BoN), which samples N = T                    fixed, hardware-agnostic search policy. For example, com-
+independent variants and selects the fastest (isolating it-          pared to H20, K ERNEL BAND allocates more exploration
+erative effects). Adaptation details are in Appendix F.              budget to FUSION on RTX 4090 (18.5% vs. 12.8%), while
+We also compare against PyTorch baselines, eager ex-                 H20 explores TILING more frequently (10.0% vs. 7.6%).
+ecution, torch.compile with inductor backend, and                    Detailed statistics and analysis can be found in Appendix I.
+torch.compile with max-autotune, to contextualize                    Such platform-specific optimization divergence confirms
+optimization gains with standard PyTorch execution (Ap-              that our hardware-informed pruning (Assumption 1) effec-
+pendix G).                                                           tively calibrates exploration to specific bottlenecks without
+                                                                     manual tuning. Consequently, while baseline methods strug-
+Optimization budget. We optimize each kernel for T = 20              gle with the diversity (GEAK drops from 1.44× on RTX
+
+                                                                 5
+                                  Steering LLM-based Kernel Optimization with K ERNEL BAND
+
+Table 1. Performance on TritonBench-G, stratified by difficulty level (L1:easiest, L5:hardest). Adjacent levels are merged where sample
+sizes are small (L1: 3, L5: 5 kernels) to ensure statistically meaningful aggregation. C: Correct (%). F: Fast@1 (%). G: Geometric mean
+speedup (standard mode: computed over correct tasks only, including regressions). Best results per configuration in bold.
+
+                                              L1–2                       L3                    L4–5                    All
+      Platform      Method              C      F       G       C         F       G       C      F       G       C       F      G
+                    BoN                63.6    9.1    0.86    12.1        6.1   0.89    28.6    14.3   1.09    31.1   10.0    0.96
+      RTX 4090      GEAK               68.2   36.4    1.62    21.2       18.2   1.45    80.0    40.0   1.34    55.6   31.1    1.44
+                    K ERNEL BAND       81.8   50.0    2.14    60.6       30.3   1.82    91.4    51.4   1.47    77.8   43.3    1.74
+                    BoN                65.5   34.5    1.41    36.9       23.1   1.35    7.1     1.4    0.63    29.3   15.9    0.99
+      H20           GEAK               68.9   34.5    1.29    60.0       29.2   1.16    31.4    14.3   0.90    49.4   23.8    1.06
+                    K ERNEL BAND       93.1   51.7    1.70    86.2       63.1   1.35    67.1    54.3   1.46    79.3   57.3    1.45
+                    BoN                73.9   34.8    1.43    38.7       24.2   1.23    14.8     6.8   0.76    31.2   16.8    0.98
+      A100          GEAK               65.2   43.5    1.09    54.8       45.2   1.18    38.6    33.0   1.54    48.0   38.7    1.34
+                    K ERNEL BAND       95.7   82.6    2.23    91.9       77.4   2.05    67.1    42.1   1.75    79.8   60.1    1.91
+
+
+4090 to 1.06× on H20), K ERNEL BAND still maintains ro-                  4.3.1. S CALABILITY AND C LUSTERING S ENSITIVITY
+bust performance (1.45× to 1.91×) across all platforms.
+                                                                         We analyze the sample efficiency (i.e., scaling to more it-
+                                                                         erations) and hyperparameter sensitivity by running K ER -
+                                                                         NEL BAND with K ∈ {1, 2, 3, 5} against baselines for an
+Scaling with kernel complexity. The performance gap
+                                                                         extended budget of T = 40 iterations, as shown in Figure 2.
+widens on challenging kernels. For the 23 Hard (L4-5)
+kernels on A100, K ERNEL BAND achieves 67.1% correct-
+ness and 1.75× speedup, significantly outperforming GEAK                 Superior scaling behavior. While baselines saturate
+(38.6% C, 1.54× G). While naive sampling (BoN) fails to                  early—BoN stagnates at 1.05× and GEAK plateaus at
+generate valid kernels for 85% of tasks, and unstructured                1.13× after 25 iterations—K ERNEL BAND (K=3) demon-
+search (GEAK) struggles to improve performance, K ERNEL -                strates continuous improvement, reaching 1.71× at T =39.
+BAND’s structured exploration efficiently identifies paths               At the standard budget (T =20), K ERNEL BAND achieves
+that are both correct and efficient in the vast search space.            1.48× speedup, outperforming GEAK by 37%. This con-
+                                                                         firms that our hierarchical MAB solution successfully allows
+                                                                         provably efficient exploration for the challenging kernel op-
+Practical optimization yield. The Fast@1 metric mea-                     timization problem.
+sures the probability of finding an optimized kernel (speedup
+> 1.0×). K ERNEL BAND demonstrates remarkable consis-                    Optimal clustering granularity. The interplay between
+tency, achieving Fast@1 rates of 43.3%–60.1% across all                  cluster count K and iteration budget reveals a clear trade-off.
+platforms. In contrast, BoN fails to accelerate most tasks               For limited budgets (T ≤ 10), smaller K ∈ {1, 2} performs
+(10.0%–16.8%), while GEAK shows both lower average                       best by concentrating exploration. However, as the budget
+performance and higher volatility (23.8%–38.7%). The 39–                 grows (T ≥ 20), K = 3 overtakes simpler configurations
+140% relative improvement of K ERNEL BAND over GEAK                      (reaching 1.66× vs. 1.58× for K = 2 at T = 30). The 5%
+confirms the effectiveness of our structured exploration:                advantage demonstrates the value of cross-cluster knowl-
+hardware-informed pruning filters out physically invalid                 edge transfer when sufficient budget is available. Notably,
+candidates early, and dynamic clustering efficiently guides              K = 5 consistently underperforms (1.54×), suggesting that
+the search toward high-potential regions. The two algo-                  excessive fragmentation hurts bandit learning. We therefore
+rithmic designs ensure K ERNEL BAND not only generates                   recommend K = 3 for default optimization. Importantly,
+correct code but delivers actual speedups for a substantially            all tested K configurations consistently outperform both
+larger fraction of the optimization budget.                              baselines across the full iteration range, indicating that K ER -
+                                                                         NEL BAND’s advantage is robust to this hyperparameter.
+4.3. Detailed Analysis
+                                                                         4.3.2. ROBUSTNESS ACROSS LLM BACKENDS
+In this section, We conduct a detailed analysis to validate
+K ERNEL BAND’s algorithmic properties, generalization ca-                To ensure our gains are not model-specific, we benchmark
+pabilities, and practical cost-efficiency. Unless otherwise              K ERNEL BAND across four SOTA LLMs.
+stated, all experiments use a 50-kernel subset (preserv-
+ing category and difficulty distribution as detailed in Ap-              Generalized performance advantage. As shown in Ta-
+pendix E) on the H20 platform.                                           ble 2, K ERNEL BAND consistently outperforms baselines
+
+                                                                     6
+                                                                Steering LLM-based Kernel Optimization with K ERNEL BAND
+
+                                         BoN                                                         Table 3. Strategy selection statistics. Freq: selection frequency (%).
+                               1.8       GEAK                                                        Succ: success rate (%, correct & speedup >1×). Best: percentage
+      Geometric Mean Speedup             KernelBand (K=1)
+                                         KernelBand (K=5)                                            of successful applications that contributed to the final best kernel.
+                               1.6       KernelBand (K=2)
+                                         KernelBand (K=3)
+                                                                                                           Strategy                      Freq (%) Succ (%) Best (%)
+                               1.4
+                                                                                                           Tiling                             10.0               14.4               61.5
+                               1.2                                                                         Vectorization                      14.7               57.1               17.1
+                                                                                                           Fusion                             12.8               75.0               55.2
+                                                                  T=20                                     Pipeline                            9.8               64.4               26.3
+                               1.0
+                                     0            10            20          30          40                 Reordering                         33.2               48.7               25.3
+                                                            Iteration                                      Access & Layout                    19.5               29.5               19.2
+Figure 2. Scaling and clustering sensitivity. K ERNEL BAND (K=3)
+shows sustained improvement, while baselines saturate early.                                                 Serial View (Cumulative)
+                                                                                                                                                                              Total: 13.4 min
+                                                                                                                                          LLM
+Table 2. LLM generalization results. C: Correct (%). G: Geometric                                                                         87%
+mean speedup. F: Fast@1 (%). Best results per model in bold.
+                                                                                                             Parallel View (Effective)
+   Model                                         Method                  C (%) F (%)         G                                                                                    Total: 129s
+                                                                                                                LLM    Profiling         Compilation               Execution
+                                                 BoN                     27.5    12.5    1.10                   16%      14%                34%                      30%
+   DeepSeek-V3.2                                 GEAK                    37.5    17.5    0.95
+                                                 K ERNEL BAND            85.0    67.5    1.52               0           20               40                 60          80                 100
+                                                                                                                                          Percentage (%)
+                                                 BoN                     44.9    28.6    1.14                    LLM         Profiling        Compilation         Execution           Others
+   GPT-5                                         GEAK                    51.0    24.5    1.07
+                                                 K ERNEL BAND            81.6    65.3    1.72        Figure 3. Time breakdown per kernel/iteration: (a) Serial cumu-
+                                                                                                     lative time (13.4 min); (b) Parallel wall-clock time with batched
+                   BoN                                                   40.8    24.5    1.17        LLM calls (129s).
+   Claude Opus 4.5 GEAK                                                  63.3    38.8    1.30
+                   K ERNEL BAND                                          89.8    73.5    1.82
+                                                 BoN                     47.9    25.0    1.20        4.4.1. C OST AND E FFICIENCY A NALYSIS
+   Gemini 3 Flash                                GEAK                    62.5    37.5    1.21
+                                                 K ERNEL BAND            70.8    45.8    1.48        Finally, we examine the computational and economic feasi-
+                                                                                                     bility of K ERNEL BAND for real-world use.
+
+regardless of the underlying model. With Claude Opus 4.5,                                            Time breakdown. Figure 3 decomposes the per-kernel
+it achieves an impressive 1.82× speedup and 89.8% correct-                                           iteration latency. While LLM inference dominates serial
+ness. Even with the smaller Gemini 3 Flash, K ERNEL BAND                                             execution (87%), batched inference shifts the bottleneck
+maintains a substantial lead (1.48× vs. 1.21× for GEAK).                                             to compilation (34%) and execution (30%), reducing the
+                                                                                                     effective wall-clock time to just 129s per iteration. This con-
+Compensating for Model Capabilities. While abso-                                                     firms that K ERNEL BAND fits comfortably within practical
+lute performance naturally correlates with model strength                                            compilation timeouts.
+(Claude > GPT-5 > DeepSeek > Gemini), the relative gain
+provided by K ERNEL BAND remains robust, indicating that                                             Cost analysis. Despite higher per-iteration costs due to
+our structured exploration framework acts as a powerful                                              multi-strategy exploration, K ERNEL BAND delivers supe-
+amplifier of any code LLM.                                                                           rior optimization per dollar as shown in Figure 4. At a
+                                                                                                     fixed budget of $0.50 per kernel, it achieves 1.83× speedup,
+4.4. Analysis on the strategy selection pattern.                                                     outperforming GEAK by 35% (1.35×) and BoN by 50%
+                                                                                                     (1.22×). This cost-effectiveness stems from our pruning
+Strategy risk-reward profiles. Table 3 reveals how the                                               mechanism, filtering low-value candidates early, ensuring
+bandit policy manages trade-offs between risks and rewards.                                          that API costs translate directly to performance gains.
+Tiling represents a “high-risk, high-reward” strategy: low
+success rate (14.4%) but massive impact when successful
+                                                                                                     4.5. Ablation Study
+(61.5% best-kernel contribution). Conversely, Vectoriza-
+tion offers “low-risk, low-reward” gains (57.1% success,                                             We dissect the effectiveness of K ERNEL BAND through
+17.1% best). Fusion strikes a balance (75% success, 55%                                              single-component ablations (removing one module)
+best). The bandit policy of K ERNEL BAND effectively navi-                                           and framework-level changes (altering the optimization
+gates these profiles, prioritizing reliable gains while occa-                                        paradigm). Detailed descriptions and analysis of ablation
+sionally gambling on high-variance strategies.                                                       settings can be found in Appendix J.
+
+                                                                                                 7
+                                                            Steering LLM-based Kernel Optimization with K ERNEL BAND
+
+
+                                1.8      BoN                                                    5. Related Work
+                                         GEAK
+            Speedup (best-of)   1.7      KernelBand                                             LLM-based kernel optimization. Several recent and con-
+                                1.6                                                             current works explore LLM-based agentic workflows for
+                                1.5                                                             automated kernel optimization. STARK (Dong et al., 2025a)
+                                1.4                                                             employs multi-agent collaboration with grounded instruc-
+                                1.3                                                             tion and strategic search to explore the optimization space.
+                                1.2                                                             CudaForge (Zhang et al., 2025) uses a Coder-Judge archi-
+                                1.1
+                                                                                                tecture that iteratively generates and refines CUDA kernels
+                                1.0
+                                   0.0    0.1         0.2   0.3     0.4       0.5               with Nsight Compute profiling feedback. GEAK (Wang
+                                            Average API Cost per Kernel ($)                     et al., 2025a) adapts Reflexion-style reasoning loops with
+Figure 4. Speedup vs. API cost per kernel. K ERNEL BAND yields
+                                                                                                inference-time compute scaling for Triton kernel generation.
+35-50% higher speedup at equivalent budgets.                                                    TritonForge (Li et al., 2025a) integrates runtime profiling
+                                                                                                with iterative code transformation to identify bottlenecks
+                                                                                                and propose targeted modifications. While these methods
+Table 4. Single-component ablations show minimal drops;                                         demonstrate the value of code LLMs, they lack principled
+framework-level ablations show the value of core designs.                                       exploration-exploitation mechanisms to effectively navigate
+                                                                                                the vast optimization space of kernels.
+   Type Configuration                                             C (%) F (%)         G
+                                                                                                An alternative paradigm focuses on fine-tuning LLMs specif-
+                            KernelBand (Full)                     87.8        63.4   1.57
+                              w/o Clustering (K=1)                82.9        58.5   1.41       ically for kernel generation. ConCuR (Kong et al., 2025) de-
+   Single
+
+
+
+
+                              w/o Profiling                       85.4        56.1   1.26       velops a pipeline to generate and curate CUDA kernels with
+                              LLM Strategy Selection              68.3        36.6   0.97       reasoning traces for supervised fine-tuning. Kevin (Baronio
+                            w/o Strategy + Raw Prof.              43.9        26.8   1.12       et al., 2025) applies multi-turn RL to address challenges in
+   Frame.
+
+
+
+
+                            w/o Strategy Set                      78.0        48.8   1.15       long-trajectory kernel optimization. TritonRL (Woo et al.,
+                            BoN (baseline)                        34.2        17.1   0.60       2025) combines supervised fine-tuning with RL using hier-
+                                                                                                archical reward assignment to mitigate reward hacking. Our
+                                                                                                work is orthogonal to and complement this line of work,
+                                                                                                as K ERNEL BAND serves as an amplifier of any given code
+Structured bandit policy is foundational. As shown in                                           LLMs demonstrated in our experiment.
+Table 4, the most critical finding is that replacing bandit-
+                                                                                                Multi-armed bandits and their applications. Multi-armed
+based selection with LLM semantic reasoning (LLM Strat-
+                                                                                                bandits (MABs) (Berry et al., 1997; Slivkins et al., 2019;
+egy Selection, where a LLM selects which strategy to apply
+                                                                                                Kuleshov & Precup, 2014; Vermorel & Mohri, 2005) pro-
+based on kernel analysis rather than using a bandit policy)
+                                                                                                vide a principled framework for sequential decision-making
+causes a catastrophic drop to 0.97× speedup. This confirms
+                                                                                                under uncertainty, with applications ranging from clinical
+that learned bandit policy are superior to LLM intuition for
+                                                                                                trials to online advertising (Lai & Robbins, 1985). Classi-
+strategy selection. Furthermore, removing the strategy set
+                                                                                                cal algorithms like UCB (Auer et al., 2002) and Thompson
+entirely (w/o Strategy, where free-form iterative generation
+                                                                                                Sampling (Thompson, 1933) offer optimal regret bounds for
+is used as GEAK without structured strategies or profiling
+                                                                                                stationary environments, while recent work has extended
+guidance) drops performance to 1.15×. Injecting raw profil-
+                                                                                                these to contextual (Li et al., 2010; Chu et al., 2011), met-
+ing metrics without strategies (+ Raw Profiling) introduces
+                                                                                                ric (Kleinberg et al., 2008), clustering (Gentile et al., 2014),
+noise, further degrading correctness to 43.9%. These results
+                                                                                                and hierarchical settings (Bubeck et al., 2011). In systems
+validate that our structured bandit policy is the essential
+                                                                                                optimization, bandit algorithms have shown promise for
+bridge between hardware information and code generation.
+                                                                                                parameter tuning (Snoek et al., 2012; Pacula et al., 2012),
+                                                                                                compiler (Xu et al., 2017), and resource allocation (Pandey
+                                                                                                & Venkatesh, 2025). However, applying bandit algorithms
+Component contribution hierarchy. As shown in Ta-                                               to kernel optimization is largely unexplored, despite the nat-
+ble 4, at the standard budget (T = 20), profiling guidance                                      ural fit between the exploration-exploitation trade-off and
+proves more critical than clustering: disabling profiling (w/o                                  the challenge of navigating vast optimization spaces.
+Profiling) causes a 20% speedup drop (1.57× → 1.26×),
+while disabling clustering (w/o Clustering) yields a 10%
+drop (1.41×). However, as shown in Section 4.3.1, cluster-                                      6. Conclusion
+ing’s value grows with iteration budget. Both components                                        We have introduced K ERNEL BAND, a framework that
+contribute incrementally to the 2.6× improvement over the                                       bridges the gap between code LLMs and kernel optimization
+BoN baseline (0.60×).
+
+                                                                                            8
+                               Steering LLM-based Kernel Optimization with K ERNEL BAND
+
+with a hardware-constrained contextual bandit formulation.         Bubeck, S., Munos, R., Stoltz, G., and Szepesvári, C. X-
+By combining runtime behavior clustering with profiling-             armed bandits. In Journal of Machine Learning Research,
+guided pruning, K ERNEL BAND enables provably efficient              volume 12, pp. 1655–1695, 2011.
+navigation of the vast optimization space. Extensive ex-
+periments demonstrate consistent improvements over state-          Caruccio, L., Cirillo, S., Polese, G., Solimando, G., Sun-
+of-the-art methods, achieving up to 1.91× speedup with               daramurthy, S., and Tortora, G. Claude 2.0 large language
+39–140% higher optimization Fast@1 across diverse hard-              model: Tackling a real-world classification problem with
+ware platforms and LLM backends. Our work highlights the             a new iterative prompt engineering approach. Intelligent
+importance of structured and hardware-aware exploration to           Systems with Applications, 21:200336, 2024.
+unlocking LLMs’ potential for system optimization.                 Chen, T., Zheng, L., Yan, E., Jiang, Z., Moreau, T., Ceze,
+                                                                     L., Guestrin, C., and Krishnamurthy, A. Learning to opti-
+References                                                           mize tensor programs. Advances in Neural Information
+                                                                     Processing Systems, 31, 2018.
+Achiam, J., Adler, S., Agarwal, S., Ahmad, L., Akkaya, I.,
+  Aleman, F. L., Almeida, D., Altenschmidt, J., Altman, S.,        Chu, W., Li, L., Reyzin, L., and Schapire, R. Contextual
+  Anadkat, S., et al. Gpt-4 technical report. arXiv preprint         bandits with linear payoff functions. In Proceedings
+  arXiv:2303.08774, 2023.                                            of the fourteenth international conference on artificial
+                                                                     intelligence and statistics, pp. 208–214. JMLR Workshop
+Ansel, J., Yang, E., He, H., Gimelshein, N., Jain, A., Voz-          and Conference Proceedings, 2011.
+  nesensky, M., Bao, B., Bell, P., Berard, D., Burovski, E.,
+  et al. Pytorch 2: Faster machine learning through dynamic        DeepSeek AI.       DeepSeek-V3.2 model announce-
+  python bytecode transformation and graph compilation.              ment.      https://api-docs.deepseek.com/
+  In Proceedings of the 29th ACM International Conference            news/news251201, 2025. Accessed: 2026-01; de-
+  on Architectural Support for Programming Languages                 scribes DeepSeek-V3.2 model and capabilities.
+  and Operating Systems, Volume 2, pp. 929–947, 2024.
+                                                                   Dong, J., Feng, B., Guessous, D., Liang, Y., and He,
+Anthropic.         Claude Opus 4.5 model card.                       H. Flex attention: A programming model for gen-
+  https://platform.claude.com/docs/en/                               erating optimized attention kernels. arXiv preprint
+  resources/overview, 2025. Accessed: 2026-01;                       arXiv:2412.05496, 2024.
+  official Claude Opus 4.5 model documentation.                    Dong, J., Yang, Y., Liu, T., Wang, Y., Qi, F., Tarokh, V.,
+                                                                     Rangadurai, K., and Yang, S. Stark: Strategic team of
+Auer, P., Cesa-Bianchi, N., and Fischer, P. Finite-time              agents for refining kernels, 2025a. URL https://
+  analysis of the multiarmed bandit problem. In Machine              arxiv.org/abs/2510.16996.
+  learning, volume 47, pp. 235–256, 2002.
+                                                                   Dong, Y., Jiang, X., Qian, J., Wang, T., Zhang, K., Jin, Z.,
+Bai, J., Bai, S., Chu, Y., Cui, Z., Dang, K., Deng, X., Fan,         and Li, G. A survey on code generation with llm-based
+  Y., Ge, W., Han, Y., Huang, F., et al. Qwen technical              agents. arXiv preprint arXiv:2508.00083, 2025b.
+  report. arXiv preprint arXiv:2309.16609, 2023.
+                                                                   Faingnaert, T., Besard, T., and De Sutter, B. Flexible perfor-
+Baronio, C., Marsella, P., Pan, B., Guo, S., and Alberti, S.         mant gemm kernels on gpus. IEEE Transactions on Par-
+  Kevin: Multi-turn rl for generating cuda kernels. arXiv            allel and Distributed Systems, 33(9):2230–2248, 2021.
+  preprint arXiv:2507.11948, 2025.
+                                                                   Fang, J., Yu, Y., Zhao, C., and Zhou, J. Turbotransformers:
+                                                                     an efficient gpu serving system for transformer models.
+Berry, D. A., Chen, R. W., Zame, A., Heath, D. C., and
+                                                                     In Proceedings of the 26th ACM SIGPLAN Symposium
+  Shepp, L. A. Bandit problems with infinitely many arms.
+                                                                     on Principles and Practice of Parallel Programming, pp.
+  The Annals of Statistics, 25(5):2103–2116, 1997.
+                                                                     389–402, 2021.
+Bouneffouf, D., Rish, I., and Aggarwal, C. Survey on               Filipovič, J., Madzin, M., Fousek, J., and Matyska, L. Op-
+  applications of multi-armed and contextual bandits. In              timizing cuda code by kernel fusion: application on
+  2020 IEEE congress on evolutionary computation (CEC),               blas. The Journal of Supercomputing, 71(10):3934–3957,
+  pp. 1–8. IEEE, 2020.                                                2015.
+
+Boursier, E. and Perchet, V. A survey on multi-player ban-         Floridi, L. and Chiriatti, M. Gpt-3: Its nature, scope, limits,
+  dits. Journal of Machine Learning Research, 25(137):               and consequences. Minds and machines, 30(4):681–694,
+  1–45, 2024.                                                        2020.
+
+                                                               9
+                               Steering LLM-based Kernel Optimization with K ERNEL BAND
+
+Gao, W., Wang, J., Li, Y., Gao, Y., and Han, L. Automatic           Li, H., Man, K., Kanuparthy, P., Chen, H., Sun, W., Tal-
+  parameter selection optimization based on the triton com-           lam, S., Zhu, C., Zhu, K., and Qian, Z. Tritonforge:
+  piler. In Second International Conference on Power Elec-            Profiling-guided framework for automated triton kernel
+  tronics and Artificial Intelligence (PEAI 2025), volume             optimization, 2025a. URL https://arxiv.org/
+ 13657, pp. 1170–1178. SPIE, 2025.                                    abs/2512.09196.
+
+Gentile, C., Li, S., and Zappella, G. Online clustering of          Li, J., Li, S., Gao, Z., Shi, Q., Li, Y., Wang, Z., Huang, J.,
+  bandits. In International conference on machine learning,           Wang, H., Wang, J., Han, X., Liu, Z., and Sun, M. Triton-
+  pp. 757–765. PMLR, 2014.                                            Bench: Benchmarking large language model capabilities
+                                                                      for generating triton operators. In Findings of the As-
+Google. Gemini 3 Flash model endpoint documen-                        sociation for Computational Linguistics: ACL 2025, pp.
+  tation.    https://docs.cloud.google.com/                           23053–23066, Vienna, Austria, jul 2025b. Association
+ vertex-ai/generative-ai/docs/learn/                                  for Computational Linguistics. doi: 10.18653/v1/2025.
+  locations, 2025. Accessed: 2026-01; lists Gemini 3                  findings-acl.1183. URL https://aclanthology.
+  Flash in Google GenAI endpoints.                                    org/2025.findings-acl.1183/.
+
+Guo, D., Zhu, Q., Yang, D., Xie, Z., Dong, K.,                      Li, L., Chu, W., Langford, J., and Schapire, R. E. A
+  Zhang, W., Chen, G., Bi, X., Wu, Y., Li, Y., et al.                 contextual-bandit approach to personalized news article
+  Deepseek-coder: When the large language model meets                 recommendation. In Proceedings of the 19th interna-
+  programming–the rise of code intelligence. arXiv preprint           tional conference on World wide web, pp. 661–670, 2010.
+  arXiv:2401.14196, 2024.                                           Lin, B., Zhang, C., Peng, T., Zhao, H., Xiao, W., Sun, M.,
+                                                                      Liu, A., Zhang, Z., Li, L., Qiu, X., et al. Infinite-llm: Ef-
+Hager, W. W. Lipschitz continuity for constrained processes.
+                                                                      ficient llm service for long context with distattention and
+  SIAM Journal on Control and Optimization, 17(3):321–
+                                                                      distributed kvcache. arXiv preprint arXiv:2401.02669,
+  338, 1979.
+                                                                      2024.
+Hui, B., Yang, J., Cui, Z., Yang, J., Liu, D., Zhang, L.,           Mahajan, A. and Teneketzis, D. Multi-armed bandit prob-
+  Liu, T., Zhang, J., Yu, B., Lu, K., et al. Qwen2. 5-coder          lems. In Foundations and applications of sensor manage-
+  technical report. arXiv preprint arXiv:2409.12186, 2024.           ment, pp. 121–151. Springer, 2008.
+Kleinberg, R., Slivkins, A., and Upfal, E. Multi-armed              Miao, X., Oliaro, G., Zhang, Z., Cheng, X., Jin, H., Chen,
+  bandits in metric spaces. In Proceedings of the fortieth           T., and Jia, Z. Towards efficient generative large language
+  annual ACM symposium on Theory of computing, pp.                   model serving: A survey from algorithms to systems.
+  681–690, 2008.                                                     ACM Computing Surveys, 58(1):1–37, 2025.
+Kong, L., Wei, J., Shen, H., and Wang, H. Concur: Con-              Naveed, H., Khan, A. U., Qiu, S., Saqib, M., Anwar, S.,
+  ciseness makes state-of-the-art kernel generation. arXiv            Usman, M., Akhtar, N., Barnes, N., and Mian, A. A
+  preprint arXiv:2510.07356, 2025.                                    comprehensive overview of large language models. ACM
+                                                                     Transactions on Intelligent Systems and Technology, 16
+Kuleshov, V. and Precup, D. Algorithms for multi-armed                (5):1–72, 2025.
+  bandit problems. arXiv preprint arXiv:1402.6028, 2014.
+                                                                    NVIDIA. NVIDIA Blackwell architecture technical brief,
+Kwon, W., Li, Z., Zhuang, S., Sheng, Y., Zheng, L., Yu,              2025. URL https://resources.nvidia.com/
+ C. H., Gonzalez, J., Zhang, H., and Stoica, I. Efficient            en-us-blackwell-architecture.
+ memory management for large language model serving
+                                                                    NVIDIA Corporation. Nvidia nsight compute. https:
+ with pagedattention. In Proceedings of the 29th sym-
+                                                                     //developer.nvidia.com/nsight-compute,
+ posium on operating systems principles, pp. 611–626,
+                                                                     2024. Accessed: 2026-01.
+ 2023.
+                                                                    OpenAI.    OpenAI gpt-5 announcement.         https:
+Lai, T. L. and Robbins, H. Asymptotically efficient adaptive         //openai.com/index/introducing-gpt-5/,
+  allocation rules. Advances in applied mathematics, 6(1):            2025. Accessed: 2026-01; official GPT-5 model release
+  4–22, 1985.                                                         details.
+Lange, R. T., Sun, Q., Prasad, A., Faldor, M., Tang, Y.,            Pacula, M., Ansel, J., Amarasinghe, S., and O’Reilly, U.-M.
+  and Ha, D. Towards robust agentic cuda kernel bench-                Hyperparameter tuning in bandit-based adaptive operator
+  marking, verification, and optimization. arXiv preprint             selection. In European Conference on the Applications
+  arXiv:2509.14279, 2025.                                             of Evolutionary Computation, pp. 73–82. Springer, 2012.
+
+                                                               10
+                                Steering LLM-based Kernel Optimization with K ERNEL BAND
+
+Pan, X., Li, E., Li, Q., Liang, S., Shan, Y., Zhou, K., Luo,           Tillet, P., Kung, H.-T., and Cox, D. Triton: an intermediate
+  Y., Wang, X., and Zhang, J. Instinfer: In-storage attention             language and compiler for tiled neural network compu-
+  offloading for cost-effective long-context llm inference.               tations. Proceedings of the 3rd ACM SIGPLAN Interna-
+  arXiv preprint arXiv:2409.04992, 2024.                                  tional Workshop on Machine Learning and Programming
+                                                                         Languages, pp. 10–19, 2019.
+Pandey, S. and Venkatesh, T. Multi armed bandit based
+  resource allocation in near memory processing architec-              Tschand, A., Awad, M., Swann, R., Ramakrishnan, K., Ma,
+  tures. Memories-Materials, Devices, Circuits and Sys-                  J., Lowery, K., Dasika, G., and Reddi, V. J. Swizzleperf:
+  tems, pp. 100132, 2025.                                                Hardware-aware llms for gpu kernel performance opti-
+                                                                         mization. arXiv preprint arXiv:2508.20258, 2025.
+Ryoo, S., Rodrigues, C. I., Baghsorkhi, S. S., Stone, S. S.,
+  Kirk, D. B., and Hwu, W.-m. W. Optimization princi-                  Vermorel, J. and Mohri, M. Multi-armed bandit algorithms
+  ples and application performance evaluation of a mul-                  and empirical evaluation. In European conference on
+  tithreaded gpu using cuda. In Proceedings of the 13th                  machine learning, pp. 437–448. Springer, 2005.
+  ACM SIGPLAN Symposium on Principles and practice of                  Wang, J., Joshi, V., Majumder, S., Chao, X., Ding, B., Liu,
+  parallel programming, pp. 73–82, 2008.                                Z., Brahma, P. P., Li, D., Liu, Z., and Barsoum, E. Geak:
+Scott, S. L. A modern bayesian look at the multi-armed ban-             Introducing triton kernel ai agent & evaluation bench-
+  dit. Applied Stochastic Models in Business and Industry,              marks. arXiv preprint arXiv:2507.23194, 2025a.
+  26(6):639–658, 2010.                                                 Wang, L., Ma, L., Cao, S., Zhang, Q., Xue, J., Shi, Y.,
+                                                                        Zheng, N., Miao, Z., Yang, F., Cao, T., et al. Ladder:
+Shi, Y., Yang, Z., Xue, J., Ma, L., Xia, Y., Miao, Z., Guo, Y.,
+                                                                        Enabling efficient low-precision deep learning computing
+  Yang, F., and Zhou, L. Welder: Scheduling deep learning
+                                                                        through hardware-aware tensor transformation. In 18th
+  memory access via tile-graph. In 17th USENIX Sympo-
+                                                                        USENIX Symposium on Operating Systems Design and
+  sium on Operating Systems Design and Implementation
+                                                                        Implementation (OSDI 24), pp. 307–323, 2024.
+  (OSDI 23), pp. 701–718, 2023.
+                                                                       Wang, L., Cheng, Y., Shi, Y., Tang, Z., Mo, Z., Xie, W.,
+Shinn, N., Cassano, F., Berman, E., Gopinath, A.,                       Ma, L., Xia, Y., Xue, J., Yang, F., et al. Tilelang: A com-
+  Narasimhan, K., and Yao, S. Reflexion: Language agents                posable tiled programming model for ai systems. arXiv
+  with verbal reinforcement learning, 2023.                             preprint arXiv:2504.17577, 2025b.
+Silva, N., Werneck, H., Silva, T., Pereira, A. C., and Rocha,          Williams, S., Waterman, A., and Patterson, D. Roofline:
+   L. Multi-armed bandits in recommendation systems: A                  an insightful visual performance model for multicore
+   survey of the state-of-the-art and future directions. Expert         architectures. Commun. ACM, 52(4):65–76, April
+   Systems with Applications, 197:116669, 2022.                         2009. ISSN 0001-0782. doi: 10.1145/1498765.
+                                                                        1498785.      URL https://doi.org/10.1145/
+Slivkins, A. et al. Introduction to multi-armed bandits.
+                                                                        1498765.1498785.
+  Foundations and Trends® in Machine Learning, 12(1-
+   2):1–286, 2019.                                                     Woo, J., Zhu, S., Nie, A., Jia, Z., Wang, Y., and Park, Y.
+                                                                        Tritonrl: Training llms to think and code triton without
+Snoek, J., Larochelle, H., and Adams, R. P. Practical                   cheating. arXiv preprint arXiv:2510.17891, 2025.
+  bayesian optimization of machine learning algorithms.
+  In Advances in neural information processing systems,                Xu, C., Liu, G., Zhao, R., Yang, S., Luo, G., and Zhang,
+  2012.                                                                  Z. A parallel bandit-based approach for autotuning fpga
+                                                                         compilation. In Proceedings of the 2017 ACM/SIGDA
+Team, G., Anil, R., Borgeaud, S., Alayrac, J.-B., Yu, J., Sori-          international symposium on field-programmable gate ar-
+  cut, R., Schalkwyk, J., Dai, A. M., Hauth, A., Millican,               rays, pp. 157–166, 2017.
+  K., et al. Gemini: a family of highly capable multimodal
+  models. arXiv preprint arXiv:2312.11805, 2023.                       Yan, F., He, Y., Ruwase, O., and Smirni, E. Efficient deep
+                                                                         neural network serving: Fast and furious. IEEE Transac-
+Team, K., Bai, Y., Bao, Y., Chen, G., Chen, J., Chen,                    tions on Network and Service Management, 15(1):112–
+  N., Chen, R., Chen, Y., Chen, Y., Chen, Y., et al.                     126, 2018.
+  Kimi k2: Open agentic intelligence. arXiv preprint
+  arXiv:2507.20534, 2025.                                              Ye, Z., Chen, L., Lai, R., Lin, W., Zhang, Y., Wang, S., Chen,
+                                                                         T., Kasikci, B., Grover, V., Krishnamurthy, A., et al. Flash-
+Thompson, W. R. On the likelihood that one unknown                       infer: Efficient and customizable attention engine for
+  probability exceeds another in view of the evidence of                 llm inference serving. arXiv preprint arXiv:2501.01005,
+  two samples. Biometrika, 25(3-4):285–294, 1933.                        2025.
+
+                                                                  11
+                               Steering LLM-based Kernel Optimization with K ERNEL BAND
+
+Zhang, Z., Wang, R., Li, S., Luo, Y., Hong, M., and Ding, C.
+  Cudaforge: An agent framework with hardware feedback
+  for cuda kernel optimization, 2025. URL https://
+  arxiv.org/abs/2511.01884.
+Zhao, W. X., Zhou, K., Li, J., Tang, T., Wang, X., Hou, Y.,
+  Min, Y., Zhang, B., Zhang, J., Dong, Z., et al. A survey of
+  large language models. arXiv preprint arXiv:2303.18223,
+  1(2), 2023.
+Zheng, L., Jia, C., Sun, M., Wu, Z., Yu, C. H., Haj-Ali,
+  A., Wang, Y., Yang, J., Zhuo, D., Sen, K., et al. Ansor:
+  Generating high-performance tensor programs for deep
+  learning. In 14th USENIX symposium on operating sys-
+  tems design and implementation (OSDI 20), pp. 863–879,
+  2020.
+Zhu, H., Wu, R., Diao, Y., Ke, S., Li, H., Zhang, C., Xue,
+  J., Ma, L., Xia, Y., Cui, W., et al. Roller: Fast and
+  efficient tensor compilation for deep learning. In 16th
+  USENIX Symposium on Operating Systems Design and
+  Implementation (OSDI 22), pp. 233–248, 2022.
+
+
+
+
+                                                                12
+                              Steering LLM-based Kernel Optimization with K ERNEL BAND
+
+A. Implementation Details
+A.1. Profiling and Clustering Features
+Behavioral feature vector ϕ(k). As defined in Section 3.2, we extract a 5-dimensional vector for clustering kernels with
+similar optimization responses:
+
+ • T̃ (k): normalized execution time (from timing run, log-transformed)
+ • nreg : registers per thread (from cuFuncGetAttribute)
+ • nsmem : shared memory per block (from cuFuncGetAttribute)
+ • dblock : block dimensions (from launch configuration)
+ • ηocc : theoretical occupancy (computed via cudaOccupancyMaxActiveBlocksPerMultiprocessor)
+
+Hardware signature h(k). For hardware-aware pruning, we extract throughput metrics via NVIDIA Nsight Compute to
+identify resource saturation:
+
+ • SM throughput (sm__throughput.avg.pct_of_peak_sustained_elapsed)
+ • DRAM throughput (dram__throughput.avg.pct_of_peak_sustained_elapsed)
+ • L2 throughput (lts__throughput.avg.pct_of_peak_sustained_elapsed)
+
+These three metrics correspond to the compute, memory bandwidth, and cache bottleneck categories described in Section 3.2.
+
+B. Proof of Theorem 1
+In this section, we provide the detailed derivation for the convergence bound of K ERNEL BAND.
+
+B.1. Regret Decomposition
+Let x∗ = arg maxx∈X µ(x) be the global optimal kernel configuration with expected reward µ∗ . Let x∗disc be the best
+candidate available in our discretized cluster centers, i.e., x∗disc = arg maxc∈{C1 ,...,CK } µ(c).
+The cumulative regret R(T ) after T rounds can be decomposed into Approximation Regret (Rapprox ) and Estimation Regret
+(Rest ):
+
+
+                                            T
+                                            X
+                                 R(T ) =          (µ∗ − µ(xt ))                                                        (8)
+                                            t=1
+                                            T
+                                            X
+                                        =         (µ∗ − µ(x∗disc ) + µ(x∗disc ) − µ(xt ))                              (9)
+                                            t=1
+                                                                  XT
+                                        = T · (µ∗ − µ(x∗disc )) +    (µ(x∗disc ) − µ(xt ))                           (10)
+                                          |        {z         } t=1
+                                                Rapprox           |         {z           }
+                                                                               Rest
+
+
+B.2. Bounding Approximation Regret
+Based on Assumption 2 (Lipschitz Continuity), the performance function µ(·) is L-Lipschitz. Since our clustering algorithm
+covers the space such that for any x, there exists a cluster center c with ∥x − c∥ ≤ ϵ, the gap between the global optimum
+and the best discrete representative is bounded by:
+                                         µ∗ − µ(x∗disc ) ≤ L · ∥x∗ − x∗disc ∥ ≤ Lϵ
+Therefore:
+                                                       Rapprox ≤ T · Lϵ                                              (11)
+
+                                                               13
+                                  Steering LLM-based Kernel Optimization with K ERNEL BAND
+
+B.3. Bounding Estimation Regret
+The term Rest represents the regret incurred by a Multi-Armed Bandit (MAB) algorithm selecting among K clusters (and
+their associated
+       √         strategies |S|). The total number of arms is N = K|S|. For standard UCB algorithms, the regret is bounded
+by Õ( N T ). Specifically, with probability 1 − δ:
+                                                        p
+                                                Rest ≤ C · K|S|T log(T /δ)                                             (12)
+
+for some universal constant C.
+
+B.4. Final Average Regret Bound
+Combining the bounds for Rapprox and Rest :
+                                                             p              
+                                               R(T ) ≤ O          K|S|T log T + LϵT
+
+Dividing by T to obtain the average regret (convergence rate):
+                                                        r             !
+                                           R(T )           K|S| log T
+                                                 ≤O                     + Lϵ
+                                             T                 T
+
+As T → ∞, the first term approaches 0, ensuring that the algorithm converges to the Lϵ-neighborhood of the global
+optimum.
+
+C. LLM Configuration
+Table 5 summarizes the configuration for all LLM backends used in our experiments.
+
+                                                 Table 5. LLM backend configurations.
+
+                                                 Parameter              Value
+                                                 Primary Model          DeepSeek-V3.2
+                                                 Access Method          Official API
+                                                 Temperature            1.0
+                                                 Max Output Tokens      16384
+
+
+
+D. Optimization Strategy Set
+Table 6 provides the complete list of optimization strategies in S with their descriptions and example transformations.
+
+   Table 6. Complete optimization strategy set. This refined set was distilled from an initial 10 strategies through pilot experiments.
+
+                                    Strategy             Description
+                                    Tiling               Partition computation into configurable tile
+                                                         sizes for improved cache locality and paral-
+                                                         lelism
+                                    Vectorization        Use vector loads/stores (e.g., float4) for im-
+                                                         proved memory throughput
+                                    Fusion               Combine multiple operations to reduce in-
+                                                         termediate memory traffic
+                                    Pipeline             Configure software pipelining depth for la-
+                                                         tency hiding
+                                    Reordering           Optimize loop order and instruction schedul-
+                                                         ing for better ILP
+                                    Access & Layout      Optimize memory access patterns, coalesc-
+                                                         ing, and data layout
+
+
+
+                                                                   14
+                              Steering LLM-based Kernel Optimization with K ERNEL BAND
+
+                              Table 7. Category distribution: full benchmark vs. sampled subset.
+
+                                     Category                  Full (184)    Subset (50)
+                                     Attention                29 (15.8%)      7 (14.0%)
+                                     MatMul/GEMM              26 (14.1%)      7 (14.0%)
+                                     Normalization             18 (9.8%)       4 (8.0%)
+                                     Linear Attention/SSM      17 (9.2%)      4 (8.0%)
+                                     Element-wise Ops          16 (8.7%)      3 (6.0%)
+                                     Memory/Index Ops          13 (7.1%)      3 (6.0%)
+                                     Other                     12 (6.5%)       3 (6.0%)
+                                     Embedding/RoPE            11 (6.0%)      3 (6.0%)
+                                     Softmax                   11 (6.0%)       4 (8.0%)
+                                     Fused Ops/Activation      10 (5.4%)       4 (8.0%)
+                                     Quantization               8 (4.3%)       2 (4.0%)
+                                     Loss Functions             7 (3.8%)       3 (6.0%)
+                                     Reduction                  6 (3.3%)       3 (6.0%)
+
+
+E. Benchmark Subset Details
+For detailed analysis experiments, we use a stratified subset of 50 kernels from the 184-kernel TritonBench-G benchmark.
+The subset was generated using stratified random sampling (seed=42) to preserve the original category and difficulty
+distribution:
+
+  • Category coverage: All 13 functional categories represented
+  • Difficulty distribution: L1 (1), L2 (7), L3 (18), L4 (23), L5 (1)
+  • Sampling ratio: 27.2% of the full benchmark
+  • Maximum deviation from original distribution: <1%
+
+Table 7 compares the category distribution between the full benchmark and the sampled subset. Table 8 lists all 50 kernels
+organized by difficulty level and functional category.
+
+F. Baseline Discussion
+Benchmark Modifications. The original TritonBench release contained implementation issues that impacted reliable
+evaluation. We adopt the corrected benchmark version provided by GEAK (Wang et al., 2025a), which addresses these
+issues. Additionally, we performed straightforward function substitutions to convert AMD-specific implementations to their
+NVIDIA equivalents, without modifying kernel logic or semantics.
+GEAK Adaptation. GEAK’s adaptation to NVIDIA GPUs involved only platform-specific configurations (e.g., device
+queries, memory bandwidth specifications) without altering the agent’s core logic or prompts.
+Other Agent-based Methods. Other agent-based methods present reproducibility challenges: STARK (Dong et al., 2025a),
+TritonForge, and QiMeng-Kernel have not released their code; we contacted authors but code remains unavailable due to
+corporate IP constraints or ongoing submissions. CudaForge (Zhang et al., 2025) targets CUDA kernels on KernelBench
+and would require non-trivial adaptation to our Triton-based evaluation framework; we consider it concurrent work.
+
+G. PyTorch Baseline Comparison
+To contextualize the optimization gains of Triton kernels relative to standard PyTorch execution, we compare K ER -
+NEL BAND -optimized kernels against three PyTorch execution modes: (1) eager mode (default PyTorch execution),
+(2) inductor (torch.compile with the default inductor backend), and (3) max-autotune (torch.compile with
+mode="max-autotune").
+
+Experimental setup. From the 50-kernel subset, we select 30 kernels suitable for fair comparison with PyTorch, where
+native operators are available (e.g., torch.softmax, F.layer_norm). We exclude special-purpose kernels (e.g., Flash
+
+                                                             15
+                               Steering LLM-based Kernel Optimization with K ERNEL BAND
+
+Attention decode, INT4 quantization, LoRA operations) that lack general PyTorch counterparts. Experiments are conducted
+on H20 with DeepSeek-V3.2 and T = 20 iterations.
+
+Results. Table 9 presents the geometric mean speedup of K ERNEL BAND-optimized Triton kernels over each PyTorch
+baseline. The results demonstrate that K ERNEL BAND achieves substantial speedups over all PyTorch execution modes, with
+1.87× over inductor, 2.16× over max-autotune, and 2.13× over eager execution. The larger speedup over max-autotune
+compared to inductor is noteworthy: while max-autotune performs more extensive autotuning, it may over-specialize to
+specific input shapes, whereas K ERNEL BAND’s optimization generalizes better across the diverse input shapes in our
+evaluation.
+These results validate that K ERNEL BAND’s LLM-driven Triton kernel optimization provides meaningful performance
+gains beyond what PyTorch’s built-in compilation and autotuning can achieve, justifying the investment in custom kernel
+development for performance-critical workloads.
+
+H. Evaluation Protocol Details
+Correctness verification. The Execution Accuracy check uses torch.allclose with absolute tolerance atol = 10−4
+and relative tolerance rtol = 10−4 . A kernel passes when |generated − reference| ≤ atol + rtol × |reference|.
+
+Statistical robustness. For each input shape, we use Triton’s triton.testing.do_bench function, which handles
+common GPU benchmarking pitfalls such as measuring only kernel launch time (via time.time), omitting cache clearing,
+and skipping warmup. The function performs 100ms of warmup runs to stabilize GPU state, followed by 1000ms of timed
+runs. We report the median execution time to reduce sensitivity to outliers.
+
+Weighted aggregation. The overall kernel speedup is computed as the ratio of total baseline runtime to total optimized
+runtime:                                               P
+                                                           tbaseline,i
+                                           Speedup = P i
+                                                          t
+                                                        i optimized,i
+
+This metric reflects end-to-end performance: shapes with longer execution times naturally dominate the aggregation.
+
+I. Robust adaptation to hardware diversity
+Prior work has repeatedly shown that the most effective operator optimizations are hardware dependent: the optimal
+schedule/transform set must reflect each platform’s compute–memory balance and microarchitectural constraints (e.g., cache
+behavior, memory bandwidth, and parallel execution resources) (Williams et al., 2009; Chen et al., 2018; Zheng et al.,
+2020). Consistent with this principle, our empirical strategy statistics provide direct evidence that K ERNEL BAND adapts
+its optimization choices across devices rather than applying a fixed, hardware-agnostic search policy. Table 10 reports
+three complementary views: (i) selection frequency (F REQ), (ii) success rate among attempted transformations (S UCC;
+correctness and speedup > 1×), and (iii) contribution to the final best kernel (B EST). The observed shifts in F REQ across
+H20 and RTX 4090 indicate that K ERNEL BAND reallocates exploration budget across strategy families in a platform-aware
+manner, aligning with the long-standing motivation behind hardware-targeted auto-scheduling systems (Chen et al., 2018;
+Zheng et al., 2020).
+Concretely, the strategy mix differs noticeably between H20 and RTX 4090. For example, F USION is selected substantially
+more often on RTX 4090 (F REQ 18.5%) than on H20 (12.8%), and it remains highly reliable on both devices (S UCC 78.6%
+on RTX 4090 vs. 75.0% on H20), while also contributing frequently to the best-performing kernels (B EST 63.1% vs. 55.2%).
+In contrast, T ILING exhibits an inverse risk–reward profile: it is attempted slightly more on H20 (10%) than on RTX 4090
+(7.6%), yet has low success rates on both (14.4% vs. 18.7%) while yielding disproportionately large best-kernel contributions
+when it does succeed (B EST 61.5% on H20 vs. 47.3% on RTX 4090). Meanwhile, ACCESS & L AYOUT becomes more
+prominent on RTX 4090 (22.9% vs. 19.5%) and shows higher effectiveness there (S UCC 38.9% vs. 29.5%), suggesting
+device-specific sensitivity to memory access behavior and layout-driven locality. These cross-device changes collectively
+support our claim that K ERNEL BAND calibrates its search to the dominant bottlenecks of each platform, as predicted by
+performance modeling insights (e.g., Roofline) and confirmed by hardware-aware optimization studies (Williams et al.,
+2009; Tschand et al., 2025).
+
+                                                            16
+                               Steering LLM-based Kernel Optimization with K ERNEL BAND
+
+J. Detailed Ablation Study
+J.0.1. C OMPONENT A BLATION
+To understand the contribution of each component, we evaluate K ERNEL BAND with seven configurations organized into two
+categories: single-component ablations that remove one component while preserving others, and framework-level ablations
+that alter the fundamental optimization paradigm.
+
+Single-component ablations.      These configurations isolate the contribution of individual components:
+
+  • KernelBand (Full): Complete system with strategy set, hardware-aware masking and kernel selection, UCB-based
+    exploration, and runtime clustering (K = 3).
+  • w/o Clustering (K = 1): All kernels treated as a single cluster. Tests whether runtime-behavior clustering enables
+    effective cross-kernel knowledge transfer.
+  • w/o Profiling: Hardware masking disabled (Mi,s = 1 for all), and within-cluster kernel selection falls back to recency
+    tie-break. Tests the value of hardware profiling guidance.
+  • LLM Strategy Selection: Strategy set preserved, but the LLM selects which strategy to apply based on kernel analysis
+    rather than UCB statistics. Tests whether learned statistics outperform LLM semantic judgment.
+
+Framework-level ablations.      These configurations fundamentally alter how optimization is structured:
+
+  • w/o Strategy + Raw Profiling: Removes the strategy set; the LLM generates optimizations freely with raw profiling
+    metrics (L2 miss rate, memory bandwidth, etc.) injected into the prompt. Tests structured strategy abstraction versus
+    raw metric injection (Zhang et al., 2025).
+  • w/o Strategy Set: Free-form iterative generation without structured strategies or profiling guidance, similar to Reflexion-
+    style approaches (Shinn et al., 2023). Since the strategy set is foundational to UCB statistics and profiling compatibility,
+    removing it effectively disables these components.
+  • BoN (baseline): Best-of-N independent sampling without iteration. Included as a lower bound to quantify the value of
+    iterative optimization.
+
+Component dependencies. An important insight is that the strategy set S serves as the foundation for other components:
+profiling computes compatibility ψ(s, ϕ(k)) per strategy, UCB maintains statistics µ̂i,s per (cluster, strategy) pair, and
+clustering’s primary value is enabling cross-cluster UCB statistic sharing. Thus, removing the strategy set (framework-level
+ablation) implicitly disables structured use of profiling and UCB, which is why we expect a larger performance gap for
+framework-level ablations compared to single-component ablations.
+
+
+
+
+                                                             17
+                         Steering LLM-based Kernel Optimization with K ERNEL BAND
+
+Table 8. Complete list of 50 kernels in the evaluation subset, stratified by difficulty (L1–L5) and functional category.
+
+                          #     Diff.   Category                  Kernel Name
+                          1     L1      Element-wise Ops          cosine_compute
+                          2     L2      Attention                 flash_decode2_phi
+                          3     L2      MatMul/GEMM               matmul_kernel
+                          4     L2      Memory/Index Ops          matrix_transpose
+                          5     L2      Normalization             triton_mul2
+                          6     L2      Other                     square_matrix
+                          7     L2      Reduction                 triton_argmax
+                          8     L2      Softmax                   softmax_triton1
+                          9     L3      Attention                 flash_decode2_llama
+                          10    L3      Element-wise Ops          pow_scalar_tensor
+                          11    L3      Embedding/RoPE            embedding_triton_kernel
+                          12    L3      Fused Ops/Activation      relu_strided_buffer
+                          13    L3      Fused Ops/Activation      swiglu_backward
+                          14    L3      Fused Ops/Activation      swiglu_triton
+                          15    L3      Linear Attention/SSM      chunk_cumsum_vector
+                          16    L3      Linear Attention/SSM      reversed_cumsum_scalar
+                          17    L3      Loss Functions            kldiv_triton
+                          18    L3      MatMul/GEMM               triton_matmul
+                          19    L3      Memory/Index Ops          var_len_copy
+                          20    L3      Normalization             layer_norm_welfold
+                          21    L3      Normalization             rmsnorm_fused_llama
+                          22    L3      Other                     uniform_sampling
+                          23    L3      Quantization              quantize_kv_copy
+                          24    L3      Reduction                 matrix_reduction
+                          25    L3      Softmax                   softmax_triton2
+                          26    L3      Softmax                   softmax_triton3
+                          27    L4      Attention                 attention_fwd_triton1
+                          28    L4      Attention                 attention_fwd_triton2
+                          29    L4      Attention                 attention_kernel
+                          30    L4      Attention                 triton_attention
+                          31    L4      Element-wise Ops          matrix_vector_multip
+                          32    L4      Embedding/RoPE            fast_rope_embedding
+                          33    L4      Embedding/RoPE            rope_backward_transform
+                          34    L4      Fused Ops/Activation      relu_triton_kernel
+                          35    L4      Linear Attention/SSM      chunk_gate_recurrence
+                          36    L4      Linear Attention/SSM      fused_recurrent_retention
+                          37    L4      Loss Functions            cross_entropy_ops
+                          38    L4      Loss Functions            fast_ce_loss
+                          39    L4      MatMul/GEMM               int8_matmul_quantization
+                          40    L4      MatMul/GEMM               int_scaled_matmul
+                          41    L4      MatMul/GEMM               matmul_dequantize_int4
+                          42    L4      MatMul/GEMM               rms_matmul_rbe
+                          43    L4      MatMul/GEMM               streamk_matmul
+                          44    L4      Memory/Index Ops          kcache_copy_triton
+                          45    L4      Normalization             fused_layernorm_triton
+                          46    L4      Other                     bgmv_expand_slice
+                          47    L4      Quantization              quantize_copy_kv
+                          48    L4      Reduction                 logsumexp_fwd
+                          49    L4      Softmax                   ksoftmax_triton
+                          50    L5      Attention                 context_attn_bloom
+
+
+ Table 9. Speedup of K ERNEL BAND-optimized Triton kernels over PyTorch baselines (30 kernels, H20, T = 20).
+
+                                            PyTorch Baseline      Speedup
+                                            vs. eager               2.13×
+                                            vs. inductor            1.87×
+                                            vs. max-autotune        2.16×
+
+
+                                                          18
+                                  Steering LLM-based Kernel Optimization with K ERNEL BAND
+
+
+
+
+Table 10. Strategy utilization statistics across H20 and RTX 4090 (50 kernels, T =20). F REQ: selection frequency (%). S UCC: success
+rate (%, correct and speedup > 1×). B EST: percentage of successful applications that contributed to the final best kernel.
+                            (a) H20                                                           (b) RTX 4090
+
+ Strategy               Freq (%)      Succ (%)     Best (%)           Strategy               Freq (%)      Succ (%)      Best (%)
+ Tiling                     10           14.4         61.5            Tiling                     7.6          18.7         47.3
+ Vectorization             14.7          57.1         17.1            Vectorization             16.2          61.4         14.6
+ Fusion                    12.8          75.0         55.2            Fusion                    18.5          78.6         63.1
+ Pipeline                  9.8           64.4         26.3            Pipeline                   5.7          51.9         13.8
+ Reordering                33.2          48.7         25.3            Reordering                29.1          49.8         30.7
+ Access & Layout           19.5          29.5         19.2            Access & Layout           22.9          38.9         35.9
+
+
+
+
+                                                                 19
+
